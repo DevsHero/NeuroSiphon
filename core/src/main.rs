@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use context_slicer::config::load_config;
 use context_slicer::inspector::analyze_file;
+use context_slicer::inspector::render_skeleton;
 use context_slicer::mapper::{build_map_from_manifests, build_module_graph, build_repo_map, build_repo_map_scoped};
+use context_slicer::server::run_stdio_server;
 use context_slicer::slicer::slice_to_xml;
 use serde_json::json;
-use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -34,6 +35,10 @@ struct Cli {
     #[arg(long, value_name = "FILE_PATH")]
     inspect: Option<PathBuf>,
 
+    /// Output a pruned "skeleton" view of a single file (function bodies replaced with /* ... */)
+    #[arg(long, value_name = "FILE_PATH")]
+    skeleton: Option<PathBuf>,
+
     /// Target module/directory path (relative to repo root)
     #[arg(long, short = 't')]
     target: Option<PathBuf>,
@@ -41,6 +46,10 @@ struct Cli {
     /// Output XML to stdout (also writes .context-slicer/active_context.xml)
     #[arg(long)]
     xml: bool,
+
+    /// Disable skeleton mode (emit full file contents into XML)
+    #[arg(long)]
+    full: bool,
 
     /// Token budget override
     #[arg(long, default_value_t = 32_000)]
@@ -60,7 +69,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if matches!(cli.cmd, Some(Command::Mcp)) {
-        return run_mcp();
+        return run_stdio_server();
     }
 
     let repo_root = std::env::current_dir().context("Failed to get current dir")?;
@@ -90,6 +99,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Some(p) = cli.skeleton {
+        let abs = if p.is_absolute() { p } else { repo_root.join(&p) };
+        let skel = render_skeleton(&abs)?;
+        print!("{}", skel);
+        return Ok(());
+    }
+
     if cli.map {
         let map = if let Some(scope) = cli.map_target.as_ref() {
             build_repo_map_scoped(&repo_root, scope)?
@@ -101,7 +117,10 @@ fn main() -> Result<()> {
     }
 
     let target = cli.target.context("Missing --target")?;
-    let cfg = load_config(&repo_root);
+    let mut cfg = load_config(&repo_root);
+    if cli.full {
+        cfg.skeleton_mode = false;
+    }
 
     let (xml, _meta) = slice_to_xml(&repo_root, &target, cli.budget_tokens, &cfg)?;
 
@@ -129,118 +148,6 @@ fn main() -> Result<()> {
     } else {
         // Default to printing JSON meta later; for now just confirm success.
         eprintln!("Wrote {} bytes to {}", xml.len(), out_dir.join("active_context.xml").display());
-    }
-
-    Ok(())
-}
-
-fn run_mcp() -> Result<()> {
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { continue };
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let msg: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let id = msg.get("id").cloned();
-        let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
-
-        let reply = match method {
-            "initialize" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "protocolVersion": msg.get("params").and_then(|p| p.get("protocolVersion")).cloned().unwrap_or(json!("2024-11-05")),
-                    "capabilities": { "tools": { "listChanged": true } },
-                    "serverInfo": { "name": "context-slicer-rs", "version": "0.1.0" }
-                }
-            }),
-            "tools/list" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "tools": [
-                        {
-                            "name": "get_context_slice",
-                            "description": "Return the generated context slice as XML",
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "repoPath": { "type": "string" },
-                                    "target": { "type": "string" },
-                                    "budget_tokens": { "type": "integer", "exclusiveMinimum": 0 }
-                                },
-                                "required": ["target"]
-                            },
-                            "execution": { "taskSupport": "forbidden" }
-                        }
-                    ]
-                }
-            }),
-            "tools/call" => {
-                let params = msg.get("params").cloned().unwrap_or(json!({}));
-                let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                if name != "get_context_slice" {
-                    json!({
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "result": { "content": [{"type":"text","text":"Tool not found"}], "isError": true }
-                    })
-                } else {
-                    let args = params.get("arguments").cloned().unwrap_or(json!({}));
-                    let repo_root = args
-                        .get("repoPath")
-                        .and_then(|v| v.as_str())
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| std::env::current_dir().unwrap());
-
-                    let target_str = args.get("target").and_then(|v| v.as_str());
-                    if target_str.is_none() {
-                        json!({
-                            "jsonrpc": "2.0",
-                            "id": id,
-                            "result": { "content": [{"type":"text","text":"Missing target"}], "isError": true }
-                        })
-                    } else {
-                        let target = PathBuf::from(target_str.unwrap());
-
-                    let budget_tokens = args
-                        .get("budget_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(32_000) as usize;
-
-                        let cfg = load_config(&repo_root);
-                        match slice_to_xml(&repo_root, &target, budget_tokens, &cfg) {
-                            Ok((xml, _meta)) => json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "result": { "content": [{"type":"text","text": xml}] }
-                            }),
-                            Err(e) => json!({
-                                "jsonrpc": "2.0",
-                                "id": id,
-                                "result": { "content": [{"type":"text","text": e.to_string()}], "isError": true }
-                            }),
-                        }
-                    }
-                }
-            }
-            _ => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": { "content": [{"type":"text","text":"Method not supported"}], "isError": true }
-            }),
-        };
-
-        writeln!(stdout, "{}", reply.to_string())?;
-        stdout.flush()?;
     }
 
     Ok(())

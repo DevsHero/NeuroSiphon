@@ -22,6 +22,8 @@ impl Default for TokenEstimatorConfig {
 pub struct Config {
     pub output_dir: PathBuf,
     pub token_estimator: TokenEstimatorConfig,
+    /// When true, generate "skeleton" file content (function bodies pruned) for supported languages.
+    pub skeleton_mode: bool,
 }
 
 impl Default for Config {
@@ -29,6 +31,7 @@ impl Default for Config {
         Self {
             output_dir: PathBuf::from(".context-slicer"),
             token_estimator: TokenEstimatorConfig::default(),
+            skeleton_mode: true,
         }
     }
 }

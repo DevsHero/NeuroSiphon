@@ -114,8 +114,7 @@ fn is_comment_only_line_trimmed(t: &str) -> bool {
 fn strip_trailing_whitespace(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for part in text.split_inclusive('\n') {
-        if part.ends_with('\n') {
-            let line = &part[..part.len() - 1];
+        if let Some(line) = part.strip_suffix('\n') {
             out.push_str(line.trim_end_matches([' ', '\t', '\r']));
             out.push('\n');
         } else {
@@ -240,8 +239,9 @@ fn strip_comment_only_lines_and_blocks(text: &str) -> String {
             }
 
             if contains_todo_fixme(&block_text) {
-                for k in i..=j.min(lines.len().saturating_sub(1)) {
-                    out_lines.push(lines[k].to_string());
+                let end = j.min(lines.len().saturating_sub(1));
+                for l in lines.iter().take(end + 1).skip(i) {
+                    out_lines.push((*l).to_string());
                 }
             }
             i = j.saturating_add(1);

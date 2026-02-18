@@ -10,8 +10,7 @@ fn crunch_text_for_cdata(input: &str) -> String {
     // First pass: trim line-end whitespace.
     let mut trimmed = String::with_capacity(input.len());
     for part in input.split_inclusive('\n') {
-        if part.ends_with('\n') {
-            let line = &part[..part.len() - 1];
+        if let Some(line) = part.strip_suffix('\n') {
             trimmed.push_str(line.trim_end_matches([' ', '\t', '\r']));
             trimmed.push('\n');
         } else {

@@ -1,48 +1,61 @@
 use anyhow::{Context, Result};
 use ignore::WalkBuilder;
-use ignore::gitignore::{Gitignore, GitignoreBuilder};
+use ignore::overrides::{Override, OverrideBuilder};
 use std::path::{Path, PathBuf};
 
-fn repomix_default_gitignore(repo_root: &Path, exclude_dir_names: &[String]) -> Result<Gitignore> {
-    let mut gb = GitignoreBuilder::new(repo_root);
+fn repomix_default_overrides(repo_root: &Path, exclude_dir_names: &[String]) -> Result<Override> {
+    let mut ob = OverrideBuilder::new(repo_root);
 
     // Repomix-style optimization list (common high-noise artifacts).
+    // Note: For directories, include patterns for both the directory entry and its descendants,
+    // otherwise walkers may still descend into the directory.
+
     // Lockfiles
-    gb.add_line(None, "**/*.lock")?;
-    gb.add_line(None, "**/package-lock.json")?;
-    gb.add_line(None, "**/pnpm-lock.yaml")?;
-    gb.add_line(None, "**/yarn.lock")?;
-    gb.add_line(None, "**/Cargo.lock")?;
+    ob.add("**/*.lock")?;
+    ob.add("**/package-lock.json")?;
+    ob.add("**/pnpm-lock.yaml")?;
+    ob.add("**/yarn.lock")?;
+    ob.add("**/Cargo.lock")?;
 
     // Sourcemaps + images/icons
-    gb.add_line(None, "**/*.map")?;
-    gb.add_line(None, "**/*.svg")?;
-    gb.add_line(None, "**/*.png")?;
-    gb.add_line(None, "**/*.ico")?;
-    gb.add_line(None, "**/*.jpg")?;
-    gb.add_line(None, "**/*.jpeg")?;
-    gb.add_line(None, "**/*.gif")?;
+    ob.add("**/*.map")?;
+    ob.add("**/*.svg")?;
+    ob.add("**/*.png")?;
+    ob.add("**/*.ico")?;
+    ob.add("**/*.jpg")?;
+    ob.add("**/*.jpeg")?;
+    ob.add("**/*.gif")?;
 
-    // Common build outputs
-    gb.add_line(None, "**/dist/**")?;
-    gb.add_line(None, "**/build/**")?;
-    gb.add_line(None, "**/coverage/**")?;
-    gb.add_line(None, "**/.next/**")?;
-    gb.add_line(None, "**/.nuxt/**")?;
-    gb.add_line(None, "**/.vscode-test/**")?;
-    gb.add_line(None, "**/.vscode/**")?;
-    gb.add_line(None, "**/out/**")?;
+    // Common build outputs / heavy dirs
+    for d in [
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        "build",
+        "coverage",
+        ".next",
+        ".nuxt",
+        ".vscode-test",
+        ".vscode",
+        "out",
+        ".context-slicer",
+    ] {
+        ob.add(&format!("**/{d}"))?;
+        ob.add(&format!("**/{d}/**"))?;
+    }
 
     // Project-specific excluded dirs
     for d in exclude_dir_names {
-        let d = d.trim();
+        let d = d.trim().trim_matches('/');
         if d.is_empty() {
             continue;
         }
-        gb.add_line(None, &format!("**/{}/**", d))?;
+        ob.add(&format!("**/{d}"))?;
+        ob.add(&format!("**/{d}/**"))?;
     }
 
-    Ok(gb.build()?)
+    Ok(ob.build()?)
 }
 
 #[derive(Debug, Clone)]
@@ -82,13 +95,10 @@ pub fn scan_workspace(opts: &ScanOptions) -> Result<Vec<FileEntry>> {
     }
 
     let mut entries = Vec::new();
-    let gi = repomix_default_gitignore(&opts.repo_root, &opts.exclude_dir_names)?;
+    let overrides = repomix_default_overrides(&opts.repo_root, &opts.exclude_dir_names)?;
     let walker = WalkBuilder::new(&target_root)
         .standard_filters(true) // .gitignore, .ignore, hidden, etc.
-        .filter_entry(move |e| {
-            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            !gi.matched_path_or_any_parents(e.path(), is_dir).is_ignore()
-        })
+        .overrides(overrides)
         .build();
 
     for item in walker {
@@ -104,7 +114,7 @@ pub fn scan_workspace(opts: &ScanOptions) -> Result<Vec<FileEntry>> {
         let abs_path = dent.into_path();
         // Overrides already handle excluded/junk patterns.
 
-        let bytes = match std::fs::metadata(&abs_path).and_then(|m| Ok(m.len())) {
+        let bytes = match std::fs::metadata(&abs_path).map(|m| m.len()) {
             Ok(b) => b,
             Err(_) => continue,
         };
@@ -128,9 +138,9 @@ pub fn scan_workspace(opts: &ScanOptions) -> Result<Vec<FileEntry>> {
 }
 
 fn scan_single_file(repo_root: &Path, abs_path: &Path, max_file_bytes: u64) -> Result<Vec<FileEntry>> {
-    // Apply the same default override patterns for consistency.
-    let gi = repomix_default_gitignore(repo_root, &[])?;
-    if gi.matched_path_or_any_parents(abs_path, /* is_dir */ false).is_ignore() {
+    // Apply the same default overrides for consistency.
+    let ov = repomix_default_overrides(repo_root, &[])?;
+    if ov.matched(abs_path, /* is_dir */ false).is_ignore() {
         return Ok(vec![]);
     }
 

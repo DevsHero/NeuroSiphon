@@ -26,6 +26,94 @@ pub fn estimate_tokens_from_bytes(total_bytes: u64, chars_per_token: usize) -> u
     ((total_bytes as f64) / (chars_per_token as f64)).ceil() as usize
 }
 
+/// Slice a specific list of repo-relative file paths into context XML.
+///
+/// Paths are assumed repo-relative with '/' separators.
+pub fn slice_paths_to_xml(repo_root: &Path, rel_paths: &[String], budget_tokens: usize, cfg: &Config) -> Result<(String, SliceMeta)> {
+    let repo_root = repo_root.to_path_buf();
+    let target = PathBuf::from(".");
+
+    // Build entries in the provided order (assumed relevance-ranked).
+    let mut entries: Vec<crate::scanner::FileEntry> = Vec::new();
+    for rel in rel_paths {
+        let rel_norm = rel.replace('\\', "/");
+        let abs = repo_root.join(&rel_norm);
+        let meta = match std::fs::metadata(&abs) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let bytes = meta.len();
+        if bytes == 0 || bytes > cfg.token_estimator.max_file_bytes {
+            continue;
+        }
+        entries.push(crate::scanner::FileEntry {
+            abs_path: abs,
+            rel_path: PathBuf::from(rel_norm),
+            bytes,
+        });
+    }
+
+    let all_paths: Vec<String> = entries
+        .iter()
+        .map(|e| e.rel_path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    let repository_map_text = build_repository_map_text(&all_paths);
+
+    let mut files_for_xml: Vec<(String, String)> = Vec::new();
+    let mut total_bytes: u64 = 64;
+    total_bytes = total_bytes
+        .saturating_add(estimate_xml_repository_map_overhead_bytes())
+        .saturating_add(repository_map_text.len() as u64);
+
+    for e in entries.iter() {
+        let bytes = match std::fs::read(&e.abs_path) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let content_full = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
+        let rel = e.rel_path.to_string_lossy().replace('\\', "/");
+
+        let content = if cfg.skeleton_mode {
+            match try_render_skeleton_from_source(&e.abs_path, &content_full) {
+                Ok(Some(s)) => s,
+                Ok(None) => truncate_unknown(&rel, &content_full),
+                Err(_) => truncate_unknown(&rel, &content_full),
+            }
+        } else {
+            content_full
+        };
+
+        let overhead = estimate_xml_file_overhead_bytes(&rel);
+        let new_total = total_bytes
+            .saturating_add(overhead)
+            .saturating_add(content.len() as u64);
+        let est = estimate_tokens_from_bytes(new_total, cfg.token_estimator.chars_per_token);
+        if est > budget_tokens {
+            continue;
+        }
+
+        total_bytes = new_total;
+        files_for_xml.push((rel, content));
+    }
+
+    let total_tokens = estimate_tokens_from_bytes(total_bytes, cfg.token_estimator.chars_per_token);
+    let xml = build_context_xml(Some(&repository_map_text), &files_for_xml)?;
+
+    let meta = SliceMeta {
+        repo_root,
+        target,
+        budget_tokens,
+        total_tokens,
+        total_files: files_for_xml.len(),
+        total_bytes,
+    };
+
+    Ok((xml, meta))
+}
+
 fn estimate_xml_file_overhead_bytes(rel_path: &str) -> u64 {
     // Rough but consistent overhead estimate for:
     // <file path="{path}"><![CDATA[{content}]]></file>
@@ -37,7 +125,7 @@ fn estimate_xml_file_overhead_bytes(rel_path: &str) -> u64 {
     // <![CDATA[    -> 9 bytes
     // ]]></file>   -> 10 bytes
     // Total const  -> 33 bytes
-    33u64 + rel_path.as_bytes().len() as u64
+    33u64 + rel_path.len() as u64
 }
 
 fn estimate_xml_repository_map_overhead_bytes() -> u64 {
@@ -105,7 +193,7 @@ fn compact_cargo_toml(content: &str) -> Option<String> {
         }
     }
 
-    Some(toml::to_string_pretty(&toml::Value::Table(out)).ok()?)
+    toml::to_string_pretty(&toml::Value::Table(out)).ok()
 }
 
 fn compact_package_json(content: &str) -> Option<String> {
@@ -131,7 +219,7 @@ fn compact_package_json(content: &str) -> Option<String> {
             out.insert(k.to_string(), val.clone());
         }
     }
-    Some(serde_json::to_string_pretty(&serde_json::Value::Object(out)).ok()?)
+    serde_json::to_string_pretty(&serde_json::Value::Object(out)).ok()
 }
 
 fn importance_score(rel_path: &str) -> i64 {
@@ -253,9 +341,8 @@ fn build_repository_map_text(all_paths: &[String]) -> String {
     out.push_str("# REPOSITORY_MAP\n");
 
     let mut bytes_written: usize = out.len();
-    let mut lines_written: usize = 0;
 
-    for p in all_paths {
+    for (lines_written, p) in all_paths.iter().enumerate() {
         if lines_written >= max_lines {
             out.push_str("# ... (truncated)\n");
             break;
@@ -268,7 +355,6 @@ fn build_repository_map_text(all_paths: &[String]) -> String {
         out.push_str(p);
         out.push('\n');
         bytes_written += add;
-        lines_written += 1;
     }
 
     out
@@ -328,7 +414,7 @@ pub fn slice_to_xml(repo_root: &Path, target: &Path, budget_tokens: usize, cfg: 
     // Include repository map header.
     total_bytes = total_bytes
         .saturating_add(estimate_xml_repository_map_overhead_bytes())
-        .saturating_add(repository_map_text.as_bytes().len() as u64);
+        .saturating_add(repository_map_text.len() as u64);
 
     for e in entries {
         let bytes = match std::fs::read(&e.abs_path)
@@ -366,7 +452,7 @@ pub fn slice_to_xml(repo_root: &Path, target: &Path, budget_tokens: usize, cfg: 
         let overhead = estimate_xml_file_overhead_bytes(&rel);
         let new_total = total_bytes
             .saturating_add(overhead)
-            .saturating_add(content.as_bytes().len() as u64);
+            .saturating_add(content.len() as u64);
         let est = estimate_tokens_from_bytes(new_total, cfg.token_estimator.chars_per_token);
         if est > budget_tokens {
             continue;

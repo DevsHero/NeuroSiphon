@@ -24,6 +24,30 @@ pub struct Config {
     pub token_estimator: TokenEstimatorConfig,
     /// When true, generate "skeleton" file content (function bodies pruned) for supported languages.
     pub skeleton_mode: bool,
+    /// Vector search defaults when using `--query`.
+    pub vector_search: VectorSearchConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VectorSearchConfig {
+    /// HuggingFace model repo ID used by Model2Vec-RS.
+    pub model: String,
+    /// Number of lines per chunk when building the vector index.
+    pub chunk_lines: usize,
+    /// Default max number of unique file paths to return for vector search.
+    /// (If CLI `--query-limit` is provided, it wins. If omitted, we may auto-tune.)
+    pub default_query_limit: usize,
+}
+
+impl Default for VectorSearchConfig {
+    fn default() -> Self {
+        Self {
+            model: "minishlab/potion-base-8M".to_string(),
+            chunk_lines: 40,
+            default_query_limit: 30,
+        }
+    }
 }
 
 impl Default for Config {
@@ -32,6 +56,7 @@ impl Default for Config {
             output_dir: PathBuf::from(".context-slicer"),
             token_estimator: TokenEstimatorConfig::default(),
             skeleton_mode: true,
+            vector_search: VectorSearchConfig::default(),
         }
     }
 }

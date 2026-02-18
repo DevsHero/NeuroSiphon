@@ -5,4 +5,5 @@ pub mod slicer;
 pub mod xml_builder;
 pub mod inspector;
 pub mod universal;
+pub mod vector_store;
 pub mod server;

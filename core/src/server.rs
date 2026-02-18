@@ -219,7 +219,7 @@ pub fn run_stdio_server() -> Result<()> {
             }),
         };
 
-        writeln!(stdout, "{}", reply.to_string())?;
+        writeln!(stdout, "{}", reply)?;
         stdout.flush()?;
     }
 

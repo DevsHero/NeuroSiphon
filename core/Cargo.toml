@@ -13,6 +13,21 @@ anyhow = "1.0"
 quick-xml = "0.31"
 toml = "0.8"
 regex = "1.10"
+rayon = "1.10"
+indicatif = "0.17"
+
+# Hybrid search (local embeddings + embedded vector DB)
+model2vec-rs = "0.1.4"
+lancedb = "0.4"
+
+# LanceDB 0.4 expects Arrow RecordBatches for ingestion and returns Arrow streams.
+arrow-array = "51.0.0"
+arrow-schema = "51.0.0"
+futures = "0.3"
+
+# Workaround: arrow-arith (transitive via lancedb) currently fails to compile with chrono>=0.4.43
+# due to an ambiguous `quarter()` method. Pin chrono to a compatible version.
+chrono = "=0.4.39"
 
 # Deep-dive inspection (symbol extraction)
 tree-sitter = "0.20"
@@ -34,3 +49,8 @@ lang-dart = ["dep:tree-sitter-dart"]
 lang-java = ["dep:tree-sitter-java"]
 lang-csharp = ["dep:tree-sitter-c-sharp"]
 lang-php = ["dep:tree-sitter-php"]
+
+[profile.release]
+lto = false
+codegen-units = 16
+strip = "none"

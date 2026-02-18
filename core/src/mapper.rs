@@ -91,14 +91,12 @@ fn read_go_module_name(go_mod: &Path) -> Option<String> {
                 return None;
             }
             // Prefer a short label: last segment of module path.
-            return Some(
-                module_path
-                    .split('/')
-                    .filter(|s| !s.is_empty())
-                    .last()
-                    .unwrap_or(module_path)
-                    .to_string(),
-            );
+            let short = module_path
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .next_back()
+                .unwrap_or(module_path);
+            return Some(short.to_string());
         }
     }
     None
@@ -622,7 +620,7 @@ fn resolve_ts_import(repo_root: &Path, from_file_abs: &Path, imp: &str) -> Optio
     None
 }
 
-fn find_owner_module<'a>(mut dir: &'a Path, stop_at: &Path, module_roots: &BTreeSet<PathBuf>) -> Option<PathBuf> {
+fn find_owner_module(mut dir: &Path, stop_at: &Path, module_roots: &BTreeSet<PathBuf>) -> Option<PathBuf> {
     loop {
         if module_roots.contains(dir) {
             return Some(dir.to_path_buf());
@@ -802,7 +800,7 @@ fn normalize_slash(p: &Path) -> String {
 fn rel_str(repo_root: &Path, p: &Path) -> Option<String> {
     p.strip_prefix(repo_root)
         .ok()
-        .map(|x| normalize_slash(x.as_ref()))
+    .map(normalize_slash)
 }
 
 fn normalize_module_id(rel: &str) -> String {

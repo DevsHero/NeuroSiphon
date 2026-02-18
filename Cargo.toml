@@ -2,10 +2,10 @@
 name = "neurosiphon"
 version = "0.3.0"
 edition = "2021"
-description = "High-performance LLM context optimizer. Extracts pure logic using AST-based skeletonization and hybrid vector search."
+description = "God-tier context optimizer for LLMs using AST skeletonization and JIT hybrid search."
 authors = ["Thanon Aphithanawat <thanon@aphithanawat.me>"]
 repository = "https://github.com/DevsHero/NeuroSiphon"
-keywords = ["llm", "mcp", "context", "optimization", "rust"]
+keywords = ["llm", "mcp", "context", "optimization", "rust", "vector-search"]
 categories = ["command-line-utilities", "development-tools"]
 license = "MIT"
 

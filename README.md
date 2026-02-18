@@ -26,13 +26,21 @@ It parses your code (AST), understands structure, nukes the fat, and feeds the L
 
 ---
 
+## 🚀 The Launch Promises
+
+- **JIT Vector Indexing**: "Always fresh, zero latency." (no watchers, no stale results)
+- **Nuclear Optimization**: "Cuts token usage by 60%." (AST skeletonization + import nuking)
+- **Pure Rust**: "No Python/Node bloat." (single native binary)
+
+---
+
 ## 👑 Why It’s the King of Context Efficiency
 
 | Feature | Standard Tools (copy/paste) | 🧠 NeuroSiphon |
 | :--- | :--- | :--- |
 | **Optimization** | None (full text) | **Nuclear** (AST skeleton + import nuking) |
 | **Search** | Grep / filename | **Hybrid** (vector semantics + graph ranking) |
-| **Token Usage** | Bloated | **Aggressively reduced** (often 40–60% less noise) |
+| **Token Usage** | Bloated | **Cuts token usage by 60%** (often 40–60% less noise) |
 | **Speed** | Overhead-heavy | **Pure Rust** (fast scan + fast slice) |
 | **Privacy** | Often cloud-dependent | **100% local** (local embeddings + local index) |
 
@@ -43,12 +51,17 @@ It parses your code (AST), understands structure, nukes the fat, and feeds the L
    - Imports collapse to one line: `// ... (imports nuked)`
    - Indentation is flattened to save whitespace tokens
 
-2. **Lightweight Hybrid Search**
+2. **JIT Vector Indexing (Always Fresh)**
+  - No background watcher: **0 CPU until you query**
+  - Before every search, NeuroSiphon refreshes the index using a fast mtime sweep + incremental embed updates
+  - Result: you can edit/generate files and query immediately without stale results
+
+3. **Lightweight Hybrid Search**
    - Uses **Model2Vec** (pure Rust, no ONNX runtime) for fast embeddings
    - Uses a **flat-file JSON index** + brute-force cosine (trivial for typical repo sizes)
    - Ranked against a dependency graph so you get **core logic first**
 
-3. **Native MCP Server**
+4. **Native MCP Server**
    - Built for **Claude Desktop** / **Cursor** / any MCP client
    - No plugins, no API keys, no cloud required
 

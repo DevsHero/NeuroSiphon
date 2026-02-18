@@ -71,7 +71,7 @@ It parses your code (AST), understands structure, nukes the fat, and feeds the L
 
 Target: NeuroSiphon Source Code (10+ Rust Files, Core Logic)
 
-Hardware: Apple M1 Max / 32GB RAM
+Hardware: Apple M4 pro / 14CPU 20GPU 24GB RAM
 
 Evidence (CLI run screenshot): [screenshot/Screenshot 2569-02-18 at 12.35.37.png](screenshot/Screenshot%202569-02-18%20at%2012.35.37.png)
 

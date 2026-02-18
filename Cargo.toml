@@ -1,10 +1,50 @@
-[workspace]
-members = [
-  "core"
-]
-resolver = "2"
+[package]
+name = "context-slicer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ignore = "0.4"
+tokio = { version = "1.0", features = ["full"] }
+anyhow = "1.0"
+quick-xml = "0.31"
+toml = "0.8"
+regex = "1.10"
+rayon = "1.10"
+indicatif = "0.17"
+
+# Hybrid search (local embeddings + flat-file vector index with brute-force cosine)
+# model2vec-rs: static embeddings via HuggingFace Hub; no ONNX runtime required.
+# lancedb and all arrow/datafusion dependencies have been removed — we use a simple
+# serde_json flat-file index with O(n*d) cosine search (n<=400 files, d=256 dims).
+model2vec-rs = "0.1.4"
+
+# Deep-dive inspection (symbol extraction)
+tree-sitter = "0.20"
+tree-sitter-rust = "0.20"
+tree-sitter-typescript = "0.20"
+tree-sitter-python = "0.20"
+tree-sitter-go = { version = "0.20.0", optional = true }
+tree-sitter-dart = { version = "0.0.4", optional = true }
+tree-sitter-java = { version = "0.20.0", optional = true }
+tree-sitter-c-sharp = { version = "0.20.0", optional = true }
+tree-sitter-php = { version = "=0.22.2", optional = true }
+
+[features]
+# Optional tree-sitter grammars are OFF by default to keep build times short.
+# Enable with: cargo build --features lang-go,lang-dart,lang-java,lang-csharp,lang-php
+default = []
+
+lang-go = ["dep:tree-sitter-go"]
+lang-dart = ["dep:tree-sitter-dart"]
+lang-java = ["dep:tree-sitter-java"]
+lang-csharp = ["dep:tree-sitter-c-sharp"]
+lang-php = ["dep:tree-sitter-php"]
 
 [profile.release]
-strip = false
 lto = false
 codegen-units = 16
+strip = "none"

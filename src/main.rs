@@ -7,9 +7,8 @@ use neurosiphon::mapper::{build_map_from_manifests, build_module_graph, build_re
 use neurosiphon::server::run_stdio_server;
 use neurosiphon::slicer::{slice_paths_to_xml, slice_to_xml};
 use neurosiphon::scanner::{scan_workspace, ScanOptions};
-use neurosiphon::vector_store::{CodebaseIndex, IndexJob};
+use neurosiphon::vector_store::CodebaseIndex;
 use indicatif::{ProgressBar, ProgressStyle};
-use rayon::prelude::*;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -96,60 +95,6 @@ fn auto_query_limit(budget_tokens: usize, entry_count: usize, configured_default
         out = out.min(entry_count);
     }
     out.max(1)
-}
-
-fn query_terms(query: &str) -> Vec<String> {
-    query
-        .split_whitespace()
-        .map(|s| s.trim().to_ascii_lowercase())
-        .filter(|s| s.len() >= 2)
-        .collect()
-}
-
-fn is_code_like_path(rel_path: &str) -> bool {
-    let p = rel_path.to_ascii_lowercase();
-    p.ends_with(".rs")
-        || p.ends_with(".ts")
-        || p.ends_with(".tsx")
-        || p.ends_with(".js")
-        || p.ends_with(".jsx")
-        || p.ends_with(".py")
-        || p.ends_with(".go")
-        || p.ends_with(".java")
-        || p.ends_with(".cs")
-        || p.ends_with(".php")
-        || p.ends_with(".kt")
-        || p.ends_with(".swift")
-        || p.ends_with(".c")
-        || p.ends_with(".cc")
-        || p.ends_with(".cpp")
-        || p.ends_with(".h")
-        || p.ends_with(".hpp")
-        || p.ends_with(".md")
-        || p.ends_with(".toml")
-        || p.ends_with(".yaml")
-        || p.ends_with(".yml")
-        || p.ends_with(".json")
-}
-
-fn score_path_for_query(rel_path: &str, terms: &[String]) -> i32 {
-    let p = rel_path.to_ascii_lowercase();
-    let filename = p.rsplit('/').next().unwrap_or(&p);
-    let mut score = 0i32;
-    for t in terms {
-        if t.is_empty() {
-            continue;
-        }
-        if filename.contains(t) {
-            score += 30;
-        } else if p.contains(t) {
-            score += 10;
-        }
-    }
-    if is_code_like_path(&p) {
-        score += 1;
-    }
-    score
 }
 
 fn main() -> Result<()> {
@@ -251,69 +196,39 @@ fn main() -> Result<()> {
         let mut index = CodebaseIndex::open(&repo_root, &db_dir, model_id, chunk_lines)?;
         model_spinner.finish_with_message("model ready".to_string());
 
-        // Run async indexing + search on a small runtime.
+        // ── JIT Incremental Refresh ──────────────────────────────────────
+        // Before every search, sweep file mtimes and embed only dirty delta.
+        // This guarantees the index is always current without a background watcher.
+        let refresh_spinner = ProgressBar::new_spinner();
+        refresh_spinner.set_style(
+            ProgressStyle::with_template("{spinner} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        refresh_spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+        refresh_spinner.set_message("checking index freshness...");
+        match index.refresh(&opts) {
+            Ok((added, updated, deleted)) if added + updated + deleted > 0 => {
+                refresh_spinner.finish_with_message(format!(
+                    "index updated: +{added} ~{updated} -{deleted}"
+                ));
+            }
+            Ok(_) => {
+                refresh_spinner.finish_with_message("index fresh (no changes)");
+            }
+            Err(e) => {
+                refresh_spinner.finish_with_message(format!("refresh warning: {e}"));
+            }
+        }
+
+        // Run async search on a small runtime.
         let rt = tokio::runtime::Runtime::new()?;
         let q_owned = q.clone();
         let limit = cli
             .query_limit
             .unwrap_or_else(|| auto_query_limit(cli.budget_tokens, entries.len(), cfg.vector_search.default_query_limit));
 
-        // Candidate cap: avoid indexing the entire repo on every query.
-        // Keep it small (hundreds) for responsiveness; the index grows incrementally over time.
-        let max_candidates = (limit * 12).clamp(80, 400);
-        let terms = query_terms(&q_owned);
-
         let rel_paths: Vec<String> = rt.block_on(async move {
-            // Incrementally index only changed files.
-            // Step 1: decide which files need reindexing (cheap metadata checks).
-            let mut to_index: Vec<(String, PathBuf)> = Vec::new();
-
-            // Score paths and take the top-N candidates.
-            let mut scored: Vec<(i32, usize)> = Vec::with_capacity(entries.len());
-            for (i, e) in entries.iter().enumerate() {
-                let rel = e.rel_path.to_string_lossy().replace('\\', "/");
-                let s = score_path_for_query(&rel, &terms);
-                scored.push((s, i));
-            }
-            scored.sort_by(|(sa, ia), (sb, ib)| {
-                // Desc score, then smaller files first.
-                sb.cmp(sa)
-                    .then_with(|| entries[*ia].bytes.cmp(&entries[*ib].bytes))
-                    .then_with(|| entries[*ia].rel_path.cmp(&entries[*ib].rel_path))
-            });
-
-            for (_score, idx) in scored.into_iter().take(max_candidates) {
-                let e = &entries[idx];
-                let rel = e.rel_path.to_string_lossy().replace('\\', "/");
-                if matches!(index.needs_reindex_path(&rel, &e.abs_path), Ok(true)) {
-                    to_index.push((rel, e.abs_path.clone()));
-                }
-            }
-
-            // Step 2: read file contents in parallel (I/O bound), then index with one DB connection.
-            let jobs: Vec<IndexJob> = to_index
-                .par_iter()
-                .filter_map(|(rel, abs)| {
-                    let bytes = std::fs::read(abs).ok()?;
-                    let content = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
-                    Some(IndexJob {
-                        rel_path: rel.clone(),
-                        abs_path: abs.clone(),
-                        content,
-                    })
-                })
-                .collect();
-
-            let pb = ProgressBar::new(jobs.len() as u64);
-            pb.set_style(
-                ProgressStyle::with_template("{bar:40.cyan/blue} {pos}/{len} indexed")
-                    .unwrap()
-                    .progress_chars("=>-"),
-            );
-            let pb2 = pb.clone();
-            let _ = index.index_jobs(&jobs, move || pb2.inc(1)).await;
-            pb.finish_and_clear();
-
             (index.search(&q_owned, limit).await).unwrap_or_default()
         });
 

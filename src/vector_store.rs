@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
 use model2vec_rs::model::StaticModel;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+
+use crate::scanner::{scan_workspace, ScanOptions};
 
 // ---------------------------------------------------------------------------
 // Lightweight flat-file vector index — no external database required.
@@ -12,6 +15,11 @@ use std::path::{Path, PathBuf};
 //                                   "embedding": [f32, ...] } } }
 //
 // Search: brute-force cosine similarity (O(n × d), n ≤ 400, d ≈ 256 → trivial).
+//
+// JIT Incremental Indexing:
+//   Call `index.refresh(scan_opts)` before every search.
+//   It does a fast mtime stat-sweep (no file reads), detects add/update/delete,
+//   then parallel-reads + embeds only the dirty delta, and persists once.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +203,106 @@ impl CodebaseIndex {
 
         self.store.save(&self.index_path);
         Ok(indexed)
+    }
+
+    /// **JIT Incremental Indexing** — run this once right before every search.
+    ///
+    /// Algorithm (all I/O is parallelized via rayon):
+    ///  1. Fast stat-sweep: walk `scan_opts` target, collect mtime/size for every file.
+    ///     No file *reads* in this phase — just OS metadata (≈10-50 ms for 10k files).
+    ///  2. Delta detection:
+    ///     - ADD   : file on disk, NOT in index
+    ///     - UPDATE: file on disk, mtime or size differs from index entry
+    ///     - DELETE: rel_path in index, file no longer on disk
+    ///  3. Parallel read + embed dirty files (rayon par_iter).
+    ///  4. Apply deletes, apply upserts, persist to disk ONCE.
+    ///
+    /// Returns `(added, updated, deleted)` counts for display.
+    pub fn refresh(&mut self, scan_opts: &ScanOptions) -> Result<(usize, usize, usize)> {
+        // ── Phase 1: fast stat sweep ─────────────────────────────────────
+        let entries = scan_workspace(scan_opts)?;
+
+        // Build a set of all current rel_paths on disk.
+        let mut disk_files: HashMap<String, (PathBuf, FileIndexMeta)> =
+            HashMap::with_capacity(entries.len());
+
+        for e in &entries {
+            let rel = e.rel_path.to_string_lossy().replace('\\', "/");
+            let meta = match Self::file_meta(&e.abs_path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            disk_files.insert(rel, (e.abs_path.clone(), meta));
+        }
+
+        // ── Phase 2: delta detection ─────────────────────────────────────
+        let mut to_add: Vec<(String, PathBuf)> = Vec::new();
+        let mut to_update: Vec<(String, PathBuf)> = Vec::new();
+        let mut to_delete: Vec<String> = Vec::new();
+
+        // Add / update
+        for (rel, (abs, new_meta)) in &disk_files {
+            if self.should_reindex(rel, new_meta) {
+                if self.store.entries.contains_key(rel.as_str()) {
+                    to_update.push((rel.clone(), abs.clone()));
+                } else {
+                    to_add.push((rel.clone(), abs.clone()));
+                }
+            }
+        }
+
+        // Delete (in index but gone from disk)
+        let index_keys: HashSet<String> = self.store.entries.keys().cloned().collect();
+        for key in &index_keys {
+            if !disk_files.contains_key(key.as_str()) {
+                to_delete.push(key.clone());
+            }
+        }
+
+        let added = to_add.len();
+        let updated = to_update.len();
+        let deleted = to_delete.len();
+
+        // Early exit when nothing changed.
+        if added == 0 && updated == 0 && deleted == 0 {
+            return Ok((0, 0, 0));
+        }
+
+        // ── Phase 3: parallel read dirty files ───────────────────────────
+        let dirty: Vec<(String, PathBuf)> = to_add.into_iter().chain(to_update).collect();
+
+        let read_results: Vec<(String, PathBuf, String)> = dirty
+            .par_iter()
+            .filter_map(|(rel, abs)| {
+                let content = Self::read_file_lossy(abs).ok()?;
+                Some((rel.clone(), abs.clone(), content))
+            })
+            .collect();
+
+        // ── Phase 4: embed + upsert (sequential, model is not Send) ──────
+        for (rel, abs, content) in read_results {
+            let new_meta = match Self::file_meta(&abs) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let snippet = Self::snippet_by_lines(&content, self.chunk_lines);
+            if snippet.trim().is_empty() {
+                continue;
+            }
+            let doc = format!("passage: file: {}\n{}", rel, snippet);
+            let embedding = self.model.encode_single(&doc);
+            self.store.entries.insert(rel, IndexEntry { meta: new_meta, embedding });
+        }
+
+        // Apply deletes.
+        for key in &to_delete {
+            self.store.entries.remove(key);
+        }
+
+        // Persist once.
+        self.store.save(&self.index_path);
+
+        Ok((added, updated, deleted))
     }
 
     /// Index a single file given its content (used for incremental updates).

@@ -10,20 +10,19 @@ What you get:
 
 ## Status
 - Rust CLI + MCP server: usable
-- VS Code extension: **not ready yet** — please **avoid using it for production** (work in progress)
 
 ## Quick start
 
 ### Build
-Requirements: Rust toolchain + Node.js (only for workspace scripts).
+Requirements: Rust toolchain.
 
-- Build Rust core (release): `npm run build:core`
-- Or build everything: `npm run build:all`
+- Build (release): `cargo build --release`
 
 ### Generate context (baseline)
 From repo root:
 
 - Slice a target folder: `./core/target/release/context-slicer --target . --budget-tokens 32000 --xml > /dev/null`
+- Slice a target folder: `./target/release/context-slicer --target . --budget-tokens 32000 --xml > /dev/null`
 
 Outputs:
 - `.context-slicer/active_context.xml`
@@ -33,10 +32,11 @@ Outputs:
 Use `--query` to index (incrementally) and slice only the most relevant files:
 
 - `./core/target/release/context-slicer --target . --query "vector search lancedb" --budget-tokens 32000 --xml > /dev/null`
+- `./target/release/context-slicer --target . --query "vector search lancedb" --budget-tokens 32000 --xml > /dev/null`
 
 Tips:
-- To avoid pulling in unrelated areas (like the unfinished extension), scope indexing to core:
-  - `./core/target/release/context-slicer --target core/src --query "vector search lancedb" --xml > /dev/null`
+- To avoid pulling in unrelated areas, scope indexing to the subtree you care about:
+  - `./target/release/context-slicer --target src --query "vector search lancedb" --xml > /dev/null`
 - If you omit `--query-limit`, it auto-tunes based on your `--budget-tokens` (and config defaults).
 
 ## How it works
@@ -56,7 +56,7 @@ When `--query` is used:
 - Indexing is incremental via `.context-slicer/db/index_meta.json`
 - Embeddings come from `model2vec-rs` (Model2Vec) using `minishlab/potion-base-8M` by default
 
-## CLI reference (core)
+## CLI reference
 
 Common flags:
 - `--target <PATH>`: directory or file to slice (relative to repo root)
@@ -68,7 +68,7 @@ Vector search:
 - `--query <TEXT>`: run vector search and slice only the most relevant files
 - `--query-limit <N>`: max number of unique file paths returned (if omitted, auto-tuned)
 - `--embed-model <MODEL_ID>`: override Model2Vec model (HF repo ID)
-- `--chunk-lines <N>`: override index chunk size (lines per chunk)
+- `--chunk-lines <N>`: override snippet size (lines per file) used for indexing
 
 MCP:
 - `context-slicer mcp`
@@ -82,7 +82,7 @@ Optional `.context-slicer.json` in repo root:
   "skeleton_mode": true,
   "vector_search": {
     "model": "minishlab/potion-base-8M",
-    "chunk_lines": 10,
+    "chunk_lines": 40,
     "default_query_limit": 30
   },
   "token_estimator": {
@@ -96,16 +96,16 @@ Optional `.context-slicer.json` in repo root:
 Goal: pull only the relevant files, using as few tokens as possible.
 
 - Always scope `--target` to the smallest subtree you care about.
-  - Example: `--target core/src` instead of `--target .`
+  - Example: `--target src` instead of `--target .`
 - Use `--query` for “find the relevant area” and let the slicer enforce the token budget.
-  - Example (auto limit): `./core/target/release/context-slicer --target core/src --query "index meta lancedb" --budget-tokens 12000 --xml > /dev/null`
+  - Example (auto limit): `./target/release/context-slicer --target src --query "index meta lancedb" --budget-tokens 12000 --xml > /dev/null`
 - If recall is too low (misses files), raise `--budget-tokens` or set `--query-limit` explicitly.
   - Example: `--query-limit 20`
 - If you do lots of retrieval queries, consider a retrieval-tuned model:
   - Example: `--embed-model minishlab/potion-retrieval-32M`
 
 ## MCP server
-Start: `./core/target/release/context-slicer mcp`
+Start: `./target/release/context-slicer mcp`
 
 Tools exposed:
 - `context_slicer_get_context_slice`
@@ -116,7 +116,6 @@ Tools exposed:
 ## Notes / troubleshooting
 - First `--query` run downloads a small embedding model (cached).
 - If you want maximum relevance, set `--target` to the sub-tree you care about.
-- The extension folder is currently in flux; treat it as experimental.
 
 ## Benchmarks (sample)
 These are sample timings from one developer machine (macOS, release build). Your results will vary.

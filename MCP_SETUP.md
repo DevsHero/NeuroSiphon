@@ -5,7 +5,7 @@
 ### 1. Updated mcp.json
 - **Renamed**: "context-slicer-local" → "context-slicer"
 - **Description**: Added note about vector search support + auto-tune parameters
-- **Binary Path**: `/Users/hero/Documents/GitHub/context-slicer/core/target/release/context-slicer mcp`
+- **Binary Path**: `/Users/hero/Documents/GitHub/context-slicer/target/release/context-slicer mcp`
 
 ### 2. Latest Features (New Build)
 - ✅ **Auto-tuned `--query-limit`**: Heuristic based on `--budget-tokens` + config default
@@ -38,8 +38,8 @@ Use the MCP extension in VS Code:
 
 #### Auto-tune vector search (new default behavior):
 ```bash
-./core/target/release/context-slicer \
-  --target core/src \
+./target/release/context-slicer \
+  --target src \
   --query "skeleton inspector vector" \
   --budget-tokens 12000 \
   --xml > /dev/null
@@ -48,7 +48,7 @@ Use the MCP extension in VS Code:
 
 #### Custom embedding model (retrieval-optimized):
 ```bash
-./core/target/release/context-slicer \
+./target/release/context-slicer \
   --target . \
   --query "vector search" \
   --embed-model minishlab/potion-retrieval-32M \
@@ -58,7 +58,7 @@ Use the MCP extension in VS Code:
 
 #### Custom chunk size (larger chunks):
 ```bash
-./core/target/release/context-slicer \
+./target/release/context-slicer \
   --target . \
   --query "config index" \
   --chunk-lines 20 \
@@ -68,7 +68,7 @@ Use the MCP extension in VS Code:
 
 #### Override query limit explicitly:
 ```bash
-./core/target/release/context-slicer \
+./target/release/context-slicer \
   --target . \
   --query "slicer mapper" \
   --query-limit 15 \

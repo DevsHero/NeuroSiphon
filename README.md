@@ -155,11 +155,28 @@ NeuroSiphon will:
 ### Manual (CLI)
 
 ```bash
-# Optimized slice of the 'src' folder
+# Optimized slice of a single service
 neurosiphon --target src --budget-tokens 32000 --xml
 
 # Semantic search for specific concepts
 neurosiphon --target . --query "database connection" --xml
+
+# === MONOREPO / MICROSERVICE SUPPORT ===
+
+# Huge-codebase mode: splits budget across ALL workspace members automatically.
+# Works with Cargo workspaces, npm workspaces, and auto-detected sub-projects.
+# Handles double/triple nested services (services/foo/bar/Cargo.toml, etc.)
+neurosiphon --target . --huge --xml
+
+# Inspect all discovered workspace members without slicing:
+neurosiphon --list-members
+
+# Target a specific nested service within a monorepo:
+neurosiphon --target services/core_api --xml
+neurosiphon --target apps/frontend --xml
+
+# Query across the whole monorepo (JIT hybrid search spans all services):
+neurosiphon --query "gRPC handler for embeddings" --xml
 ```
 
 ---
@@ -171,6 +188,44 @@ NeuroSiphon drops heavy infra in favor of a compact, custom-built engine:
 - **Vector Store**: flat-file JSON index + brute-force cosine similarity
 - **Parser**: tree-sitter + safe fallbacks for broad language coverage
 - **Walker**: `ignore` crate that respects `.gitignore` and auto-skips high-noise dirs (e.g. `target` and other generated build outputs)
+- **Workspace Engine**: `workspace.rs` — discovers all workspace members (Cargo, npm, Python, Go) up to N levels deep, supports glob include/exclude patterns
+
+### 🏢 Monorepo & Huge-Codebase Support
+
+NeuroSiphon ships production-grade support for the most complex repository structures:
+
+| Feature | Details |
+|---|---|
+| **Auto-detection** | Repos with ≥5 declared workspace members activate huge mode automatically |
+| **Nested services** | Scans up to 3 levels deep by default — handles `services/*/`, `apps/*/`, `packages/*/` patterns |
+| **Budget splitting** | Each workspace member gets a proportional token share; no single service crowds out others |
+| **Root context** | Top-level workspace manifests and READMEs always included at minimal cost |
+| **Explicit control** | `--huge` forces huge mode; `--list-members` shows what was detected |
+
+#### Huge-Codebase Benchmark ( 22 services, 429 files)
+
+| Mode | Files Included | Output Size | Est. Tokens | Time |
+|---|---|---|---|---|
+| `--target .` (normal) | ~32 | ~128 KB | ~32K | 0.57s |
+| `--target . --huge` | **274** | **314 KB** | **~78K** | **0.60s** |
+| `--target services/core_api` | 63 | 83 KB | ~21K | 0.08s |
+| `--query "embedding pipeline"` | 21 | 19 KB | ~5K | 0.25s |
+
+> All benchmarks: Apple M4 Pro, release build.
+
+#### `.neurosiphon.json` — Huge-Codebase Config
+
+```json
+{
+  "huge_codebase": {
+    "enabled": true,
+    "member_scan_depth": 3,
+    "min_member_budget": 4000,
+    "include_members": ["services/*", "shared/*"],
+    "exclude_members": ["**/tmp", "**/sample-*"]
+  }
+}
+```
 
 ### 🛡️ Bulletproof Design
 

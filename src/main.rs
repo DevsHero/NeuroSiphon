@@ -8,6 +8,7 @@ use neurosiphon::server::run_stdio_server;
 use neurosiphon::slicer::{slice_paths_to_xml, slice_to_xml};
 use neurosiphon::scanner::{scan_workspace, ScanOptions};
 use neurosiphon::vector_store::CodebaseIndex;
+use neurosiphon::workspace::{discover_workspace_members, WorkspaceDiscoveryOptions};
 use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
 use std::path::PathBuf;
@@ -71,6 +72,15 @@ struct Cli {
     /// Disable skeleton mode (emit full file contents into XML)
     #[arg(long)]
     full: bool,
+
+    /// Force huge-codebase mode: distribute budget across all workspace members
+    /// (auto-detected for repos with ≥5 declared workspace members).
+    #[arg(long)]
+    huge: bool,
+
+    /// List all discovered workspace members and exit (useful for debugging monorepos).
+    #[arg(long)]
+    list_members: bool,
 
     /// Token budget override
     #[arg(long, default_value_t = 32_000)]
@@ -151,6 +161,22 @@ fn main() -> Result<()> {
     let mut cfg = load_config(&repo_root);
     if cli.full {
         cfg.skeleton_mode = false;
+    }
+    if cli.huge {
+        cfg.huge_codebase.enabled = true;
+    }
+
+    // ── --list-members: inspect workspace without slicing ─────────────────
+    if cli.list_members {
+        let disc_opts = WorkspaceDiscoveryOptions {
+            max_depth: cfg.huge_codebase.member_scan_depth,
+            include_patterns: cfg.huge_codebase.include_members.clone(),
+            exclude_patterns: cfg.huge_codebase.exclude_members.clone(),
+        };
+        let members = discover_workspace_members(&repo_root, &disc_opts)?;
+        let json_out = serde_json::to_string_pretty(&members)?;
+        println!("{}", json_out);
+        return Ok(());
     }
 
     // Hybrid search mode: build/update local vector index, retrieve relevant files, then slice only those.

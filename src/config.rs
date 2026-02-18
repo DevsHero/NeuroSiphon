@@ -22,6 +22,54 @@ impl Default for TokenEstimatorConfig {
     }
 }
 
+/// Configuration for handling huge monorepo / multi-service workspaces.
+///
+/// Activated automatically when a workspace has many services, or explicitly with
+/// `--huge` CLI flag, or by setting `huge_codebase.enabled = true` in `.neurosiphon.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HugeCodebaseConfig {
+    /// Force huge-codebase mode regardless of auto-detection.
+    pub enabled: bool,
+
+    /// Max number of scanned source files before huge-codebase optimisations kick in.
+    /// Auto-detection uses this threshold when `enabled` is false.
+    pub file_count_threshold: usize,
+
+    /// Max token budget per workspace member / sub-service when splitting context.
+    /// Defaults to `budget_tokens / member_count`, floored at this value.
+    pub min_member_budget: usize,
+
+    /// Workspace members to include when the user targets the repo root (".").
+    /// Supports glob patterns like "services/*", "apps/*", "packages/*".
+    /// If empty, all detected workspace members are included.
+    pub include_members: Vec<String>,
+
+    /// Workspace members to always exclude (glob patterns).
+    pub exclude_members: Vec<String>,
+
+    /// When scanning a sub-service in huge mode, how many directories deep to look
+    /// for nested workspace members (0 = only direct children, 2 = double/triple nesting).
+    pub member_scan_depth: usize,
+
+    /// Whether to deduplicate shared library code referenced by many services.
+    pub dedup_shared_libs: bool,
+}
+
+impl Default for HugeCodebaseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            file_count_threshold: 150,
+            min_member_budget: 4_000,
+            include_members: vec![],
+            exclude_members: vec![],
+            member_scan_depth: 3,
+            dedup_shared_libs: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -31,6 +79,8 @@ pub struct Config {
     pub skeleton_mode: bool,
     /// Vector search defaults when using `--query`.
     pub vector_search: VectorSearchConfig,
+    /// Settings that govern huge monorepo / multi-service workspace behaviour.
+    pub huge_codebase: HugeCodebaseConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +112,7 @@ impl Default for Config {
             token_estimator: TokenEstimatorConfig::default(),
             skeleton_mode: true,
             vector_search: VectorSearchConfig::default(),
+            huge_codebase: HugeCodebaseConfig::default(),
         }
     }
 }

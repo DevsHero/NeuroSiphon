@@ -1,6 +1,6 @@
 # NeuroSiphon MCP Setup
 
-NeuroSiphon is a **Pure Rust MCP server** (stdio JSON-RPC). No VS Code extension required.
+NeuroSiphon is a **Pure Rust MCP server** (stdio JSON-RPC). No editor-side add-on required.
 
 ## 1) Get the Binary
 

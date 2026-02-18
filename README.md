@@ -170,7 +170,7 @@ NeuroSiphon drops heavy infra in favor of a compact, custom-built engine:
 
 - **Vector Store**: flat-file JSON index + brute-force cosine similarity
 - **Parser**: tree-sitter + safe fallbacks for broad language coverage
-- **Walker**: `ignore` crate that respects `.gitignore` and auto-skips high-noise dirs (`node_modules`, `target`, `.venv`, etc.)
+- **Walker**: `ignore` crate that respects `.gitignore` and auto-skips high-noise dirs (e.g. `target` and other generated build outputs)
 
 ### 🛡️ Bulletproof Design
 

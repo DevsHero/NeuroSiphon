@@ -48,10 +48,10 @@ impl IndexStore {
         };
         match serde_json::from_str::<Self>(&text) {
             Ok(store) => store,
-            Err(e) => {
-                eprintln!(
+            Err(_e) => {
+                crate::debug_log!(
                     "[neurosiphon] index corrupted ({}), rebuilding from scratch…",
-                    e
+                    _e
                 );
                 Self::default()
             }

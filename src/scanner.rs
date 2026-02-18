@@ -209,8 +209,11 @@ pub fn scan_workspace(opts: &ScanOptions) -> Result<Vec<FileEntry>> {
 
         // Hard absolute cap — always skip before any config override can raise it.
         if bytes > ABSOLUTE_MAX_FILE_BYTES {
-            eprintln!("[neurosiphon] skipping large file ({}): {}",
-                humanize_bytes(bytes), abs_path.display());
+            crate::debug_log!(
+                "[neurosiphon] skipping large file ({}): {}",
+                humanize_bytes(bytes),
+                abs_path.display()
+            );
             continue;
         }
 
@@ -232,6 +235,7 @@ pub fn scan_workspace(opts: &ScanOptions) -> Result<Vec<FileEntry>> {
     Ok(entries)
 }
 
+#[cfg(debug_assertions)]
 fn humanize_bytes(bytes: u64) -> String {
     if bytes >= 1_048_576 {
         format!("{:.1} MB", bytes as f64 / 1_048_576.0)
@@ -253,8 +257,11 @@ fn scan_single_file(repo_root: &Path, abs_path: &Path, max_file_bytes: u64) -> R
 
     let bytes = std::fs::metadata(abs_path)?.len();
     if bytes > ABSOLUTE_MAX_FILE_BYTES {
-        eprintln!("[neurosiphon] skipping large file ({}): {}",
-            humanize_bytes(bytes), abs_path.display());
+        crate::debug_log!(
+            "[neurosiphon] skipping large file ({}): {}",
+            humanize_bytes(bytes),
+            abs_path.display()
+        );
         return Ok(vec![]);
     }
     if bytes == 0 || bytes > max_file_bytes {

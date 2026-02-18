@@ -1,7 +1,6 @@
-node_modules/
 .neurosiphon/
+benchmarks/
 .vscode/
-dist/
 .DS_Store
 target
-extension/.vscode-test
+

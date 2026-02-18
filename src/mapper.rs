@@ -218,10 +218,7 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
     let mut seen_dirs: BTreeSet<PathBuf> = BTreeSet::new();
 
     for m in manifests {
-        // CRITICAL DEBUG: Show raw input manifest path
-        eprintln!("[DEBUG] Manifest Input: {}", m.display());
-
-        // Normalize separators for relative paths (helps when the extension passes Windows-style paths).
+        // Normalize separators for relative paths (helps when external tooling passes Windows-style paths).
         let m_norm = if m.is_absolute() {
             m.clone()
         } else {
@@ -231,37 +228,28 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
         let abs = if m_norm.is_absolute() { m_norm.clone() } else { repo_root.join(&m_norm) };
         let abs = abs.canonicalize().unwrap_or(abs);
 
-        eprintln!("[DEBUG]   Absolute Path: {}", abs.display());
-
         let name = abs.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if !is_known_manifest_file(name) {
-            eprintln!("[DEBUG]   SKIP: Not a known manifest file: {}", name);
             continue;
         }
         if !abs.exists() {
-            eprintln!("[DEBUG]   ERROR: Manifest not found: {}", abs.display());
             anyhow::bail!("Manifest not found: {}", abs.display());
         }
         let Some(parent) = abs.parent() else {
-            eprintln!("[DEBUG]   SKIP: No parent directory");
             continue;
         };
         if path_has_forbidden_component(parent) {
-            eprintln!("[DEBUG]   SKIP: Forbidden path component");
             continue;
         }
 
         let dir_abs = parent.to_path_buf();
         if seen_dirs.contains(&dir_abs) {
-            eprintln!("[DEBUG]   SKIP: Duplicate module directory");
             continue;
         }
         seen_dirs.insert(dir_abs.clone());
 
         let dir_rel = rel_str(repo_root, &dir_abs).unwrap_or_else(|| normalize_slash(&dir_abs));
         let id = normalize_module_id(&dir_rel);
-        
-        eprintln!("[DEBUG]   Normalized ID: {}", id);
 
         let folder_fallback = dir_abs
             .file_name()
@@ -428,8 +416,6 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
 
     // 3.5) Scan Cargo.toml dependencies to create edges.
     let mut weights: BTreeMap<(String, String), u64> = BTreeMap::new();
-
-    eprintln!("[DEBUG] Scanning Cargo.toml dependencies for edges");
     for s in &specs {
         // Look for Cargo.toml in this module's directory
         let cargo_toml_path = s.dir_abs.join("Cargo.toml");
@@ -438,9 +424,8 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
         }
 
         let deps = read_cargo_dependencies(&cargo_toml_path);
-        eprintln!("[DEBUG] Module '{}' has {} Cargo dependencies", s.id, deps.len());
 
-        for (dep_name, dep_path) in deps {
+        for (_dep_name, dep_path) in deps {
             // Resolve the relative path from this module's directory
             let dep_abs = s.dir_abs.join(&dep_path);
             let dep_abs = dep_abs.canonicalize().unwrap_or(dep_abs);
@@ -454,18 +439,9 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
             // Find the module that corresponds to this path
             if let Some(dst_mod_id) = path_to_module.get(&dep_rel) {
                 if dst_mod_id != &s.id {
-                    eprintln!(
-                        "[DEBUG] Cargo dependency edge: {} -> {} (via dependency '{}')",
-                        s.id, dst_mod_id, dep_name
-                    );
                     // Add weight 5 for explicit dependency (higher than single import)
                     *weights.entry((s.id.clone(), dst_mod_id.clone())).or_insert(0) += 5;
                 }
-            } else {
-                eprintln!(
-                    "[DEBUG] Cargo dependency '{}' path '{}' (resolved: '{}') does not match any selected module",
-                    dep_name, dep_path, dep_rel
-                );
             }
         }
     }
@@ -474,11 +450,8 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
 
     let module_ids: Vec<(PathBuf, String)> = specs.iter().map(|s| (s.dir_abs.clone(), s.id.clone())).collect();
 
-    eprintln!("[DEBUG] Starting import resolution. Module count: {}", module_ids.len());
-
     for (dir, src_mod_id) in &module_ids {
         let a = acc_by_dir.get(dir).cloned().unwrap_or_default();
-        eprintln!("[DEBUG] Processing module '{}' with {} files", src_mod_id, a.files.len());
         
         for file_abs in &a.files {
             let analyzed = match analyze_file(file_abs) {
@@ -498,7 +471,6 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
                     }
                     if let Some(dst_mod_id) = crate_to_module.get(first) {
                         if dst_mod_id != src_mod_id {
-                            eprintln!("[DEBUG] Trying to match import (Rust) {} -> {}", src_mod_id, dst_mod_id);
                             *weights
                                 .entry((src_mod_id.clone(), dst_mod_id.clone()))
                                 .or_insert(0) += 1;
@@ -515,7 +487,6 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
                 let Some(dst_rel) = rel_str(repo_root, &dst_file_abs) else { continue };
                 let Some(dst_mod_id) = module_id_for_rel_path(&dst_rel, &module_roots_rel) else { continue };
                 if dst_mod_id != *src_mod_id {
-                    eprintln!("[DEBUG] Trying to match import {} -> {}", src_mod_id, dst_mod_id);
                     *weights.entry((src_mod_id.clone(), dst_mod_id)).or_insert(0) += 1;
                 }
             }
@@ -524,7 +495,6 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
 
     let mut edges: Vec<ModuleEdge> = Vec::new();
     for ((s, t), w) in weights {
-        eprintln!("[DEBUG] Creating edge: {} -> {} (weight: {})", s, t, w);
         edges.push(ModuleEdge {
             id: format!("{}->{}", s, t),
             source: s,
@@ -534,12 +504,10 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
     }
     edges.sort_by(|a, b| a.id.cmp(&b.id));
 
-    eprintln!("[DEBUG] Final graph: {} nodes, {} edges", nodes.len(), edges.len());
-
     Ok(ModuleGraph { nodes, edges })
 }
 
-// Backward-compatible alias (older extension versions may still reference this name).
+// Backward-compatible alias (older clients may still reference this name).
 pub fn build_graph_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Result<ModuleGraph> {
     build_map_from_manifests(repo_root, manifests)
 }

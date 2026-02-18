@@ -1,3 +1,13 @@
+#[macro_export]
+macro_rules! debug_log {
+	($($arg:tt)*) => {{
+		#[cfg(debug_assertions)]
+		{
+			eprintln!($($arg)*);
+		}
+	}};
+}
+
 pub mod config;
 pub mod scanner;
 pub mod mapper;

@@ -156,6 +156,15 @@ NeuroSiphon drops heavy infra in favor of a compact, custom-built engine:
 - **Parser**: tree-sitter + safe fallbacks for broad language coverage
 - **Walker**: `ignore` crate that respects `.gitignore` and auto-skips high-noise dirs (`node_modules`, `target`, `.venv`, etc.)
 
+### 🛡️ Bulletproof Design
+
+NeuroSiphon is engineered to survive “dirty” enterprise monorepos:
+
+- **Binary Safety**: Detects null bytes and skips binary/non-UTF8 files safely (no crashes on `.exe`, encrypted keys, or garbage bytes)
+- **Resource Guard**: Strict **1MB hard limit per file** + **line-length checks** to prevent minified/generated code from hanging the parser
+- **Self-Healing Index**: Detects corrupted vector indices and auto-rebuilds on the next query (no manual cleanup required)
+- **Chaos Tested**: Validated against edge cases (null bytes, massive single-line files, and broken JSON)
+
 ---
 
 ## 🤝 Contributing

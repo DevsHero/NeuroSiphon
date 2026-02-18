@@ -1,6 +1,6 @@
 [package]
 name = "neurosiphon"
-version = "0.3.0"
+version = "1.0.0"
 edition = "2021"
 description = "God-tier context optimizer for LLMs using AST skeletonization and JIT hybrid search."
 authors = ["Thanon Aphithanawat <thanon@aphithanawat.me>"]

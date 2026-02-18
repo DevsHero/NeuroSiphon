@@ -102,16 +102,6 @@ cross build --release --target aarch64-unknown-linux-gnu
 # → target/aarch64-unknown-linux-gnu/release/neurosiphon
 ```
 
-### Other targets via cross
-
-```bash
-# Linux x86_64 (musl, fully static)
-cross build --release --target x86_64-unknown-linux-musl
-
-# Raspberry Pi (armv7)
-cross build --release --target armv7-unknown-linux-gnueabihf
-```
-
 ---
 
 ## Alternative: cargo-zigbuild (no Docker required)
@@ -135,15 +125,7 @@ cargo zigbuild --release --target aarch64-unknown-linux-gnu
 
 ## Pre-built Binaries
 
-You can download ready-to-use binaries from [GitHub Releases](https://github.com/DevsHero/NeuroSiphon/releases/latest):
-
-| Platform | File |
-|---|---|
-| Linux x86_64 | `neurosiphon-linux-x86_64` |
-| Linux ARM64 | `neurosiphon-linux-aarch64` |
-| macOS Intel | `neurosiphon-macos-x86_64` |
-| macOS Apple Silicon | `neurosiphon-macos-aarch64` |
-| Windows x86_64 | `neurosiphon-windows-x86_64.exe` |
+You can download ready-to-use binaries from [GitHub Releases](https://github.com/DevsHero/NeuroSiphon/releases/latest).
 
 Verify with `sha256sums.txt` provided in each release.
 
@@ -162,15 +144,6 @@ chmod +x neurosiphon-*
 The project uses GitHub Actions (`.github/workflows/release.yml`) to automatically:
 
 1. Detect `[build]` in any commit message pushed to `main`/`master`
-2. Build binaries for all 5 targets in parallel
+2. Build binaries for all targets in parallel
 3. Create a GitHub Release tagged `v{version}` (from `Cargo.toml`)
-4. Attach all binaries + `sha256sums.txt` + auto-generated changelog
-
-To trigger a release from your fork:
-
-```bash
-git commit -m "feat: some feature [build]"
-git push origin main
-```
-
-Or trigger manually from the **Actions** tab → **Build & Release** → **Run workflow**.
+4. Attach all binaries + `sha256sums.txt` + changelog

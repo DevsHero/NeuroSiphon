@@ -1,6 +1,7 @@
 node_modules/
 .context-slicer/
 .neurosiphon/
+.vscode/
 dist/
 .DS_Store
 target

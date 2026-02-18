@@ -83,7 +83,7 @@ cargo build --release
 # Binary: ./target/release/neurosiphon
 ```
 
-See [BUILDING.md](BUILDING.md) for cross-compilation and platform-specific instructions.
+See [BUILDING.md](docs/BUILDING.md) for cross-compilation and platform-specific instructions.
 
 ---
 
@@ -103,6 +103,8 @@ Add to your MCP client config (example uses Claude Desktop style JSON):
 ```
 
 Restart your MCP client. That’s it.
+
+See [MCP_SETUP.md](docs/MCP_SETUP.md)
 
 ---
 

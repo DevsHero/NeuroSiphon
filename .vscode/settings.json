@@ -1,4 +1,0 @@
-{
-  "rust-analyzer.cargo.allFeatures": true,
-  "typescript.tsdk": "extension/node_modules/typescript/lib"
-}

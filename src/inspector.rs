@@ -2429,7 +2429,8 @@ Diagnostics:\n\
 • Ensure the path is correct relative to the repo root.\n\
 • If files exist but are ignored, try again with `ignore_gitignore`: true.\n\
 • If the repo uses languages/extensions not yet supported, they will be skipped.\n\
-• If `search_filter` was set, it may have excluded everything — try without it.",
+• If `search_filter` was set, it may have excluded everything — try without it.\n\
+Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
             target_dir.display()
         ));
     }

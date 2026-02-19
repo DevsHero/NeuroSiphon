@@ -2172,6 +2172,135 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------
+// Tool: propagation_checklist — Cross-Boundary Awareness
+// ---------------------------------------------------------------------------
+
+/// Generate a cross-language propagation checklist for `symbol_name`.
+///
+/// Walks `target_dir` (honours `.gitignore`) and performs AST-accurate identifier
+/// matching (no comment/string false positives). Output is grouped by domain to
+/// reduce propagation drop across repos/services.
+pub fn propagation_checklist(target_dir: &Path, symbol_name: &str) -> Result<String> {
+    use ignore::WalkBuilder;
+    use std::collections::BTreeMap;
+
+    let abs_dir: PathBuf = if target_dir.is_absolute() {
+        target_dir.to_path_buf()
+    } else {
+        std::env::current_dir().context("Failed to get cwd")?.join(target_dir)
+    };
+
+    let walker = WalkBuilder::new(&abs_dir)
+        .standard_filters(true)
+        .hidden(true)
+        .build();
+
+    let cfg = language_config();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for entry_result in walker {
+        let Ok(entry) = entry_result else { continue };
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        if cfg.driver_for_path(path).is_none() {
+            continue;
+        }
+
+        let Ok(raw) = std::fs::read(path) else { continue };
+        if raw.contains(&0u8) {
+            continue;
+        }
+        let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
+
+        // Hot path: substring prefilter.
+        if !source_text.contains(symbol_name) {
+            continue;
+        }
+
+        let Some(driver) = cfg.driver_for_path(path) else { continue };
+        let language = driver.language_for_path(path);
+        let source = source_text.as_bytes();
+
+        let mut parser = Parser::new();
+        if parser.set_language(&language).is_err() {
+            continue;
+        }
+        let Some(tree) = parser.parse(source_text, None) else { continue };
+        let root = tree.root_node();
+
+        let mut hits: Vec<(u32, &'static str)> = Vec::new();
+        collect_identifier_refs(root, source, symbol_name, &mut hits);
+        if hits.is_empty() {
+            continue;
+        }
+        hits.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+        hits.dedup();
+
+        let rel = path
+            .strip_prefix(&abs_dir)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+        *counts.entry(rel).or_insert(0) += hits.len();
+    }
+
+    let mut proto: Vec<(String, usize)> = Vec::new();
+    let mut rust: Vec<(String, usize)> = Vec::new();
+    let mut ts: Vec<(String, usize)> = Vec::new();
+    let mut py: Vec<(String, usize)> = Vec::new();
+    let mut other: Vec<(String, usize)> = Vec::new();
+
+    for (p, n) in counts {
+        let ext = PathBuf::from(&p)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match ext.as_str() {
+            "proto" => proto.push((p, n)),
+            "rs" => rust.push((p, n)),
+            "ts" | "tsx" | "js" | "jsx" => ts.push((p, n)),
+            "py" => py.push((p, n)),
+            _ => other.push((p, n)),
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("## 📋 Propagation Checklist for `{}`\n", symbol_name));
+    out.push_str("*Review and update these files to ensure cross-service consistency.*\n\n");
+
+    let mut write_section = |title: &str, items: &Vec<(String, usize)>| {
+        if items.is_empty() {
+            return;
+        }
+        out.push_str(&format!("### {}\n", title));
+        for (p, n) in items {
+            out.push_str(&format!(
+                "- [ ] `{}` ({} usage{})\n",
+                p,
+                n,
+                if *n == 1 { "" } else { "s" }
+            ));
+        }
+        out.push('\n');
+    };
+
+    write_section("📝 Protocol Buffers (Contracts)", &proto);
+    write_section("🦀 Rust (Backend/Services)", &rust);
+    write_section("🧩 TypeScript (Frontend/UI)", &ts);
+    write_section("🐍 Python (Scripts/MLX)", &py);
+    write_section("📦 Other Definitions", &other);
+
+    if proto.is_empty() && rust.is_empty() && ts.is_empty() && py.is_empty() && other.is_empty() {
+        out.push_str(&format!("No AST-accurate usages found under {}.\n", abs_dir.display()));
+    }
+
+    Ok(out)
+}
+
 struct UsageMatch {
     category: &'static str,
     file: String,

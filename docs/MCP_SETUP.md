@@ -49,6 +49,15 @@ Restart your MCP client.
 │  └─ Returns: Low-token skeleton view
 └─ read_file_full(path, repoPath?)
    └─ Returns: Full raw file content
+
+Chronos (AST Time Machine):
+
+├─ neurosiphon_checkpoint_symbol(path, symbol_name, semantic_tag, repoPath?)
+│  └─ Saves a disk-backed snapshot under `.neurosiphon/checkpoints/` (default)
+├─ neurosiphon_list_checkpoints(repoPath?)
+│  └─ Lists available semantic tags + stored symbols
+└─ neurosiphon_compare_symbol(symbol_name, tag_a, tag_b, path?, repoPath?)
+  └─ Displays Tag A and Tag B symbol code blocks (no unified diff)
 ```
 
 ## 4) Optional Repo Config

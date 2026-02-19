@@ -4,6 +4,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use crate::config::load_config;
+use crate::chronos::{checkpoint_symbol, compare_symbol, list_checkpoints};
 use crate::inspector::{render_skeleton, read_symbol, find_usages, repo_map, call_hierarchy, run_diagnostics};
 use crate::mapper::{build_repo_map, build_repo_map_scoped};
 use crate::slicer::{slice_paths_to_xml, slice_to_xml};
@@ -97,6 +98,45 @@ impl ServerState {
                                 "symbol_name": { "type": "string", "description": "Exact name of the symbol to extract (e.g. 'process_request', 'ConvertRequest', 'MyStruct')" }
                             },
                             "required": ["path", "symbol_name"]
+                        }
+                    },
+                    {
+                        "name": "neurosiphon_checkpoint_symbol",
+                        "description": "Chronos: save a disk-backed snapshot of a specific symbol using a human-readable semantic tag (e.g. 'baseline', 'pre-refactor'). Stored under .neurosiphon/checkpoints/ by default.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "repoPath": { "type": "string", "description": "Absolute path to the repo root (used to resolve relative paths)" },
+                                "path": { "type": "string", "description": "Path to the source file (relative to repoPath, or absolute)" },
+                                "symbol_name": { "type": "string", "description": "Exact name of the symbol to snapshot" },
+                                "semantic_tag": { "type": "string", "description": "Human-readable tag for this checkpoint (e.g. 'baseline')" }
+                            },
+                            "required": ["path", "symbol_name", "semantic_tag"]
+                        }
+                    },
+                    {
+                        "name": "neurosiphon_list_checkpoints",
+                        "description": "Chronos: list available disk-backed symbol checkpoints (grouped by semantic tag).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "repoPath": { "type": "string", "description": "Absolute path to the repo root" }
+                            }
+                        }
+                    },
+                    {
+                        "name": "neurosiphon_compare_symbol",
+                        "description": "Chronos: compare two saved symbol snapshots by semantic tag. Output is side-by-side Markdown blocks (no unified diff).",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
+                                "symbol_name": { "type": "string", "description": "Exact symbol name to compare" },
+                                "tag_a": { "type": "string", "description": "First tag (e.g. 'baseline')" },
+                                "tag_b": { "type": "string", "description": "Second tag (e.g. 'post-error-handling')" },
+                                "path": { "type": "string", "description": "Optional: disambiguate if the same tag+symbol exists in multiple files" }
+                            },
+                            "required": ["symbol_name", "tag_a", "tag_b"]
                         }
                     },
                     {
@@ -256,6 +296,51 @@ impl ServerState {
                 match read_symbol(&abs, sym) {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("read_symbol failed: {e}")),
+                }
+            }
+            "neurosiphon_checkpoint_symbol" => {
+                let repo_root = self.repo_root_from_params(&args);
+                let cfg = load_config(&repo_root);
+                let Some(p) = args.get("path").and_then(|v| v.as_str()) else {
+                    return err("Missing path".to_string());
+                };
+                let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
+                    return err("Missing symbol_name".to_string());
+                };
+                let tag = args
+                    .get("semantic_tag")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| args.get("tag").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                match checkpoint_symbol(&repo_root, &cfg, p, sym, tag) {
+                    Ok(s) => ok(s),
+                    Err(e) => err(format!("checkpoint_symbol failed: {e}")),
+                }
+            }
+            "neurosiphon_list_checkpoints" => {
+                let repo_root = self.repo_root_from_params(&args);
+                let cfg = load_config(&repo_root);
+                match list_checkpoints(&repo_root, &cfg) {
+                    Ok(s) => ok(s),
+                    Err(e) => err(format!("list_checkpoints failed: {e}")),
+                }
+            }
+            "neurosiphon_compare_symbol" => {
+                let repo_root = self.repo_root_from_params(&args);
+                let cfg = load_config(&repo_root);
+                let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
+                    return err("Missing symbol_name".to_string());
+                };
+                let Some(tag_a) = args.get("tag_a").and_then(|v| v.as_str()) else {
+                    return err("Missing tag_a".to_string());
+                };
+                let Some(tag_b) = args.get("tag_b").and_then(|v| v.as_str()) else {
+                    return err("Missing tag_b".to_string());
+                };
+                let path = args.get("path").and_then(|v| v.as_str());
+                match compare_symbol(&repo_root, &cfg, sym, tag_a, tag_b, path) {
+                    Ok(s) => ok(s),
+                    Err(e) => err(format!("compare_symbol failed: {e}")),
                 }
             }
             "neurosiphon_find_usages" => {

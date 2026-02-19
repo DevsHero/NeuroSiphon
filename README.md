@@ -8,7 +8,7 @@ _Empowering LLM Agents with God-tier semantic understanding, pure AST vision, an
 [![MCP Ready](https://img.shields.io/badge/MCP-Ready-blue)](https://modelcontextprotocol.io/)
 
 ---
- 
+  
 ## ⚡️ The Paradigm Shift: From "Slicer" to "Orchestrator"
 
 Most AI coding agents rely on tools built for *human eyeballs* (like `cat`, `grep`, `tree`, or `git diff`). For an LLM, these tools are toxic. They flood the context window with whitespace, comments, unstructured noise, and force the AI into "amnesia" due to pagination.

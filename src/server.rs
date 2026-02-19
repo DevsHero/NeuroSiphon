@@ -43,7 +43,7 @@ impl ServerState {
                             "properties": {
                                 "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
                                 "target_dir": { "type": "string", "description": "Directory to map (use '.' for whole repo)" },
-                                "search_filter": { "type": "string", "description": "Optional: case-insensitive filter to keep only matching files/symbols (helps avoid pagination)" },
+                                "search_filter": { "type": "string", "description": "Optional: case-insensitive substring filter (NOT regex). Supports OR via `foo|bar|baz`. Matches file path/filename; for small folders it may also match symbol names." },
                                 "max_chars": { "type": "integer", "description": "Optional: max output chars (hard cap 8000). Lower to save tokens." },
                                 "ignore_gitignore": { "type": "boolean", "description": "Optional: when true, do not apply .gitignore/.ignore filters (default false). Useful when map_repo returns 0 files." }
                             },

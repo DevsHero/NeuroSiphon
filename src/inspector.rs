@@ -2367,22 +2367,33 @@ pub fn repo_map_with_filter(
         .build();
 
     let cfg = language_config();
-    let filter_lc = search_filter.map(|s| s.to_ascii_lowercase());
+    let search_tokens: Vec<String> = search_filter
+        .unwrap_or("")
+        .split('|')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
 
-    // Pass 1: collect files + diagnostics without reading file contents.
-    // We only read files for symbols in Deep mode (<= 30 files and <= STRICT_SUMMARY_THRESHOLD).
+    // Pass 1: collect supported candidates + diagnostics without reading file contents.
+    // Then apply search_filter with optional symbol-aware matching (only for small folders).
     let mut by_dir_files: BTreeMap<String, Vec<(String, PathBuf)>> = BTreeMap::new();
     let mut unique_dirs: BTreeSet<String> = BTreeSet::new();
 
     let mut kept_source_files: usize = 0;
     let mut dropped_by_unsupported_lang: usize = 0;
+    let mut dropped_by_search_filter: usize = 0;
 
     let mut sample_dropped: Vec<String> = Vec::new();
     let mut sample_unsupported: Vec<String> = Vec::new();
+    let mut sample_filtered_out: Vec<String> = Vec::new();
     let mut filtered_paths: HashSet<String> = HashSet::new();
 
     let mut filtered_file_count: usize = 0;
     let mut filtered_error_count: usize = 0;
+
+    // (rel_path, filename, dir_rel, abs_path)
+    let mut supported_candidates: Vec<(String, String, String, PathBuf)> = Vec::new();
 
     for entry_result in walker_filtered {
         let entry = match entry_result {
@@ -2426,11 +2437,42 @@ pub fn repo_map_with_filter(
             continue;
         }
 
-        // Optional narrowing: path/filename filter (case-insensitive).
-        if let Some(f) = &filter_lc {
-            if !rel_path.to_ascii_lowercase().contains(f) && !filename.to_ascii_lowercase().contains(f) {
-                continue;
+        supported_candidates.push((rel_path, filename, dir_rel, path.to_path_buf()));
+    }
+
+    // Optional symbol-aware filtering: for small targets only.
+    // This prevents expensive full-repo parsing while fixing UX where users
+    // expect search_filter to match function/const/class names.
+    const MAX_SYMBOL_FILTER_FILES: usize = 300;
+    let symbol_filter_enabled = !search_tokens.is_empty() && supported_candidates.len() <= MAX_SYMBOL_FILTER_FILES;
+
+    for (rel_path, filename, dir_rel, abs_path) in supported_candidates {
+        let mut matched = search_tokens.is_empty();
+
+        if !matched {
+            let rel_lc = rel_path.to_ascii_lowercase();
+            let file_lc = filename.to_ascii_lowercase();
+            matched = search_tokens
+                .iter()
+                .any(|t| rel_lc.contains(t) || file_lc.contains(t));
+        }
+
+        if !matched && symbol_filter_enabled {
+            if let Ok(source_text) = std::fs::read_to_string(&abs_path) {
+                let syms = extract_symbols_from_source(&abs_path, &source_text);
+                matched = syms.into_iter().any(|s| {
+                    let n = s.name.to_ascii_lowercase();
+                    search_tokens.iter().any(|t| n.contains(t))
+                });
             }
+        }
+
+        if !matched {
+            dropped_by_search_filter += 1;
+            if sample_filtered_out.len() < 5 {
+                sample_filtered_out.push(rel_path);
+            }
+            continue;
         }
 
         kept_source_files += 1;
@@ -2440,7 +2482,7 @@ pub fn repo_map_with_filter(
         by_dir_files
             .entry(dir_rel)
             .or_default()
-            .push((filename, path.to_path_buf()));
+            .push((filename, abs_path));
     }
 
     // Compute gitignore/ignore-filter drops by comparing against an unfiltered walk.
@@ -2489,8 +2531,15 @@ pub fn repo_map_with_filter(
         (scanned_total, dropped_by_gitignore_or_error)
     };
 
-    // Merge unsupported samples into the dropped sample list (max 5 total).
+    // Merge unsupported/filter samples into the dropped sample list (max 5 total).
     for p in sample_unsupported {
+        if sample_dropped.len() >= 5 {
+            break;
+        }
+        sample_dropped.push(p);
+    }
+
+    for p in sample_filtered_out {
         if sample_dropped.len() >= 5 {
             break;
         }
@@ -2505,15 +2554,28 @@ pub fn repo_map_with_filter(
 
     // ── 0-file guard (enterprise diagnostics) ───────────────────────────
     if kept_source_files == 0 {
+        let filter_hint = if !search_tokens.is_empty() {
+            // Include filtered_out count if we have it; helps explain "0 files".
+            format!(
+                "\n\
+• Note: `search_filter` is a case-insensitive substring filter (NOT regex).\n\
+  For OR, use `foo|bar|baz`.\n\
+  It matches file paths/filenames, and (for small folders) symbol names too.\n\
+  Filtered out by search_filter: {dropped_by_search_filter}."
+            )
+        } else {
+            String::new()
+        };
         return Err(anyhow!(
             "Error: 0 supported source files found in '{}'.\n\
 Diagnostics:\n\
 • Ensure the path is correct relative to the repo root.\n\
 • If files exist but are ignored, try again with `ignore_gitignore`: true.\n\
 • If the repo uses languages/extensions not yet supported, they will be skipped.\n\
-• If `search_filter` was set, it may have excluded everything — try without it.\n\
+• If `search_filter` was set, it may have excluded everything — try without it.{}\n\
 Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
             target_dir.display()
+            ,filter_hint
         ));
     }
 
@@ -2559,10 +2621,12 @@ Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
         }
     };
 
-    let dropped_total = dropped_by_gitignore_or_error.saturating_add(dropped_by_unsupported_lang);
+    let dropped_total = dropped_by_gitignore_or_error
+        .saturating_add(dropped_by_unsupported_lang)
+        .saturating_add(dropped_by_search_filter);
     push(&format!("{root_name}/   ({kept_source_files} files)\n"));
     push(&format!(
-        "> 📊 Scanned: {scanned_total} items | Kept Source Files: {kept_source_files} | Dropped: {dropped_total} (ignored/errors: {dropped_by_gitignore_or_error}, unsupported: {dropped_by_unsupported_lang})\n"
+        "> 📊 Scanned: {scanned_total} items | Kept Source Files: {kept_source_files} | Dropped: {dropped_total} (ignored/errors: {dropped_by_gitignore_or_error}, unsupported: {dropped_by_unsupported_lang}, filtered_out: {dropped_by_search_filter})\n"
     ));
     if !sample_dropped.is_empty() {
         let joined = sample_dropped

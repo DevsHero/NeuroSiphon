@@ -613,6 +613,9 @@ impl Default for LanguageConfig {
         #[cfg(feature = "lang-php")]
         drivers.push(Box::new(PhpDriver));
 
+        #[cfg(feature = "lang-proto")]
+        drivers.push(Box::new(ProtoDriver));
+
         let mut cfg = Self {
             drivers,
             by_ext: HashMap::new(),
@@ -1428,6 +1431,81 @@ impl LanguageDriver for PhpDriver {
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
             .collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proto3 / Proto2 driver (tree-sitter-proto)
+// ---------------------------------------------------------------------------
+// Exposes services, messages, enums, and rpc methods for map_repo, read_symbol,
+// find_usages, and call_hierarchy. No skeleton pruning needed — .proto files
+// are already human-readable contracts without implementation bodies.
+
+#[cfg(feature = "lang-proto")]
+struct ProtoDriver;
+
+#[cfg(feature = "lang-proto")]
+impl LanguageDriver for ProtoDriver {
+    fn name(&self) -> &'static str {
+        "proto"
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["proto"]
+    }
+
+    fn handles_path(&self, path: &Path) -> bool {
+        path_ext_lower(path) == "proto"
+    }
+
+    fn language_for_path(&self, _path: &Path) -> Language {
+        tree_sitter_proto::LANGUAGE.into()
+    }
+
+    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+        let mut symbols: Vec<Symbol> = Vec::new();
+
+        // Top-level services
+        symbols.extend(run_query(
+            source, root, &language,
+            r#"(service (service_name (identifier) @name)) @def"#,
+            "service", false,
+        )?);
+
+        // Top-level messages
+        symbols.extend(run_query(
+            source, root, &language,
+            r#"(message (message_name (identifier) @name)) @def"#,
+            "message", false,
+        )?);
+
+        // Top-level enums
+        symbols.extend(run_query(
+            source, root, &language,
+            r#"(enum (enum_name (identifier) @name)) @def"#,
+            "enum", false,
+        )?);
+
+        // RPC methods inside services (pruned = true so they collapse in skeleton view)
+        symbols.extend(run_query(
+            source, root, &language,
+            r#"(rpc (rpc_name (identifier) @name)) @def"#,
+            "rpc", true,
+        )?);
+
+        Ok(symbols)
+    }
+
+    // Proto files have no function bodies to prune — return empty.
+    fn body_prune_ranges(
+        &self,
+        _path: &Path,
+        _source_text: &str,
+        _source: &[u8],
+        _root: Node,
+        _language: Language,
+    ) -> Result<Vec<(usize, usize, String)>> {
+        Ok(vec![])
     }
 }
 

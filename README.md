@@ -6,7 +6,6 @@ _Empowering LLM Agents with God-tier semantic understanding, pure AST vision, an
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![MCP Ready](https://img.shields.io/badge/MCP-Ready-blue)](https://modelcontextprotocol.io/)
-[![Build & Release](https://github.com/DevsHero/CortexAST/actions/workflows/release.yml/badge.svg)](https://github.com/DevsHero/CortexAST/actions/workflows/release.yml)
 
 ---
 

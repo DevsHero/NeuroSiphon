@@ -2207,11 +2207,13 @@ fn is_public_symbol(sym: &Symbol, source_lines: &[&str], path: &Path) -> bool {
 
     match ext.as_str() {
         "rs" => {
-            // Check the declaration line for `pub ` or `pub(`
-            let line_idx = sym.line as usize;
-            let line = source_lines.get(line_idx).copied().unwrap_or("");
-            let trimmed = line.trim_start();
-            trimmed.starts_with("pub ") || trimmed.starts_with("pub(")
+            // For agentic repo mapping, private Rust symbols are often just as
+            // useful as `pub` ones. Also, attribute/doc/macro lines can precede
+            // the actual declaration, making naive `pub` string checks brittle.
+            //
+            // Intentionally bypass public-only filtering for Rust.
+            let _ = (sym, source_lines);
+            true
         }
         "py" => !sym.name.starts_with('_'),
         "go" => sym
@@ -2248,6 +2250,7 @@ static CALL_NOISE: &[&str] = &[
     "to_str", "to_path_buf", "to_string_lossy",
     "contains", "starts_with", "ends_with", "split", "splitn",
     "find", "rfind", "replace", "replacen",
+    "push_str",
     "get", "set", "insert", "remove", "retain",
     "join", "extend", "append", "truncate", "resize",
     "new", "with_capacity", "capacity",
@@ -2492,24 +2495,18 @@ fn collect_call_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec
     }
 
     if matches!(kind, "call_expression" | "method_call_expression" | "call") {
-        // Field "function" covers Rust call_expression, TypeScript call_expression,
-        // and Python call.  "method" covers Rust method_call_expression.
+        // Field "function" covers Rust/TS/JS call_expression and Python call.
+        // Field "method" covers Rust method_call_expression.
         let target_node = node
             .child_by_field_name("function")
             .or_else(|| node.child_by_field_name("method"))
             .or_else(|| node.child_by_field_name("name"));
 
         if let Some(target) = target_node {
-            let text =
-                std::str::from_utf8(&source[target.start_byte()..target.end_byte()]).unwrap_or("");
-            // Strip module/attribute prefix: `mod.func` / `self.func` / `Foo::bar`
-            let last = text
-                .rsplit(|c: char| c == '.' || c == ':')
-                .next()
-                .unwrap_or("")
-                .trim();
-            if last == symbol_name {
-                out.push(node.start_position().row as u32);
+            if let Some(last) = extract_trailing_call_identifier(target, source) {
+                if last == symbol_name {
+                    out.push(node.start_position().row as u32);
+                }
             }
         }
     }
@@ -2538,15 +2535,7 @@ fn extract_call_targets_from_body(node: Node, source: &[u8], out: &mut Vec<(Stri
             .or_else(|| node.child_by_field_name("name"));
 
         if let Some(target) = target_node {
-            let text =
-                std::str::from_utf8(&source[target.start_byte()..target.end_byte()]).unwrap_or("");
-            // Extract the trailing identifier (strips module / attribute prefix).
-            let last = text
-                .rsplit(|c: char| c == '.' || c == ':')
-                .next()
-                .unwrap_or("")
-                .trim();
-            if !last.is_empty() && last.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if let Some(last) = extract_trailing_call_identifier(target, source) {
                 out.push((last.to_string(), node.start_position().row as u32));
             }
         }
@@ -2556,6 +2545,37 @@ fn extract_call_targets_from_body(node: Node, source: &[u8], out: &mut Vec<(Stri
     for child in node.children(&mut cursor) {
         extract_call_targets_from_body(child, source, out);
     }
+}
+
+fn extract_trailing_call_identifier<'a>(target: Node, source: &'a [u8]) -> Option<&'a str> {
+    // Python: `call` nodes use `function:`. For method calls `obj.method()`,
+    // that function field is an `attribute` node and the trailing identifier is
+    // stored in the `attribute:` field (not `name:`).
+    if target.kind() == "attribute" {
+        if let Some(attr) = target.child_by_field_name("attribute") {
+            let text = std::str::from_utf8(&source[attr.start_byte()..attr.end_byte()]).ok()?;
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+
+    // Fallback: use the full slice and strip module/attribute/namespace prefixes.
+    let text = std::str::from_utf8(&source[target.start_byte()..target.end_byte()]).ok()?;
+    let last = text
+        .rsplit(|c: char| c == '.' || c == ':')
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    if last.is_empty() {
+        return None;
+    }
+    if !last.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(last)
 }
 
 // ---------------------------------------------------------------------------

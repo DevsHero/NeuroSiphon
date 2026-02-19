@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::config::load_config;
 use crate::chronos::{checkpoint_symbol, compare_symbol, list_checkpoints};
-use crate::inspector::{render_skeleton, read_symbol, find_usages, repo_map, call_hierarchy, run_diagnostics};
+use crate::inspector::{extract_symbols_from_source, render_skeleton, read_symbol, find_usages, repo_map_with_filter, call_hierarchy, run_diagnostics};
 use crate::slicer::{slice_paths_to_xml, slice_to_xml};
 use crate::scanner::{scan_workspace, ScanOptions};
 use crate::vector_store::{CodebaseIndex, IndexJob};
@@ -42,27 +42,29 @@ impl ServerState {
                             "type": "object",
                             "properties": {
                                 "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
-                                "target_dir": { "type": "string", "description": "Directory to map (use '.' for whole repo)" }
+                                "target_dir": { "type": "string", "description": "Directory to map (use '.' for whole repo)" },
+                                "search_filter": { "type": "string", "description": "Optional: case-insensitive filter to keep only matching files/symbols (helps avoid pagination)" }
                             },
                             "required": ["target_dir"]
                         }
                     },
                     {
                         "name": "read_symbol",
-                        "description": "⚡ ALWAYS USE THIS INSTEAD OF cat, head, or any file read. Extracts the exact, full source of a single symbol (function, struct, class) via AST. Saves 90%+ tokens vs reading the whole file. NEVER open a full file just to read one function.",
+                        "description": "⚡ ALWAYS USE THIS INSTEAD OF cat, head, or any file read. Extracts the exact, full source of a symbol (function, struct, class) via AST. Supports batching via `symbol_names` to fetch multiple symbols from one file in one call.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "repoPath": { "type": "string" },
                                 "path": { "type": "string", "description": "Path to the source file" },
-                                "symbol_name": { "type": "string", "description": "Exact name of the symbol (e.g. 'process_request')" }
+                                "symbol_name": { "type": "string", "description": "Exact name of the symbol (e.g. 'process_request')" },
+                                "symbol_names": { "type": "array", "items": { "type": "string" }, "description": "Optional: fetch multiple symbols in one call (e.g. ['A','B','C']). If provided, `symbol_name` is ignored." }
                             },
-                            "required": ["path", "symbol_name"]
+                            "required": ["path"]
                         }
                     },
                     {
                         "name": "find_usages",
-                        "description": "🎯 ALWAYS USE THIS INSTEAD OF grep/rg/ag/search. Finds 100% accurate semantic usages of any symbol across the entire workspace using AST analysis. Zero false positives from comments or strings. Vastly more reliable and token-efficient than shell grep.",
+                        "description": "🎯 ALWAYS USE THIS INSTEAD OF grep/rg/ag/search. Finds 100% accurate semantic usages of any symbol across the entire workspace using AST analysis. Zero false positives from comments or strings. Categorizes hits (Calls vs Type Refs vs Field Inits) to reduce cognitive load.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -150,6 +152,19 @@ impl ServerState {
                             },
                             "required": ["symbol_name", "tag_a", "tag_b"]
                         }
+                    },
+                    {
+                        "name": "propagation_checklist",
+                        "description": "✅ Generates a cross-language propagation checklist to prevent missed updates (e.g., Proto → Rust → TS). Use this after changing contracts, public APIs, or shared schemas.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
+                                "changed_path": { "type": "string", "description": "Path to the changed file (relative to repoPath or absolute)" },
+                                "max_symbols": { "type": "integer", "description": "Optional: max extracted symbols to include (default 20)" }
+                            },
+                            "required": ["changed_path"]
+                        }
                     }
                 ]
             }
@@ -217,10 +232,27 @@ impl ServerState {
                 let Some(p) = args.get("path").and_then(|v| v.as_str()) else {
                     return err("Missing path".to_string());
                 };
-                let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
-                    return err("Missing symbol_name".to_string());
-                };
                 let abs = resolve_path(&repo_root, p);
+
+                // Multi-symbol batching: symbol_names: ["A", "B", ...]
+                if let Some(arr) = args.get("symbol_names").and_then(|v| v.as_array()) {
+                    let mut out_parts: Vec<String> = Vec::new();
+                    for v in arr {
+                        let Some(sym) = v.as_str().filter(|s| !s.trim().is_empty()) else { continue };
+                        match read_symbol(&abs, sym) {
+                            Ok(s) => out_parts.push(s),
+                            Err(e) => out_parts.push(format!("// ERROR reading `{sym}`: {e}")),
+                        }
+                    }
+                    if out_parts.is_empty() {
+                        return err("Missing symbol_names (non-empty array of strings)".to_string());
+                    }
+                    return ok(out_parts.join("\n\n"));
+                }
+
+                let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
+                    return err("Missing symbol_name or symbol_names".to_string());
+                };
                 match read_symbol(&abs, sym) {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("read_symbol failed: {e}")),
@@ -290,8 +322,9 @@ impl ServerState {
                 let Some(target_str) = args.get("target_dir").and_then(|v| v.as_str()) else {
                     return err("Missing target_dir".to_string());
                 };
+                let search_filter = args.get("search_filter").and_then(|v| v.as_str()).map(|s| s.trim()).filter(|s| !s.is_empty());
                 let target_dir = resolve_path(&repo_root, target_str);
-                match repo_map(&target_dir) {
+                match repo_map_with_filter(&target_dir, search_filter) {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("repo_map failed: {e}")),
                 }
@@ -316,6 +349,49 @@ impl ServerState {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("diagnostics failed: {e}")),
                 }
+            }
+            "propagation_checklist" => {
+                let repo_root = self.repo_root_from_params(&args);
+                let Some(changed_path) = args.get("changed_path").and_then(|v| v.as_str()) else {
+                    return err("Missing changed_path".to_string());
+                };
+                let abs = resolve_path(&repo_root, changed_path);
+                let max_symbols = args.get("max_symbols").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+                let mut out = String::new();
+                out.push_str("Propagation checklist\n");
+                out.push_str(&format!("Changed: {}\n\n", abs.display()));
+
+                let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if ext == "proto" {
+                    let raw = std::fs::read_to_string(&abs);
+                    if let Ok(text) = raw {
+                        let syms = extract_symbols_from_source(&abs, &text);
+                        if !syms.is_empty() {
+                            out.push_str("Detected contract symbols (sample):\n");
+                            for s in syms.into_iter().take(max_symbols) {
+                                out.push_str(&format!("- [{}] {}\n", s.kind, s.name));
+                            }
+                            out.push('\n');
+                        }
+                    }
+
+                    out.push_str("Checklist (Proto → generated clients):\n");
+                    out.push_str("- Regenerate Rust stubs (prost/tonic build, buf, or your codegen pipeline)\n");
+                    out.push_str("- Regenerate TypeScript/JS clients (grpc-web/connect/buf generate, etc.)\n");
+                    out.push_str("- Update server handlers for any renamed RPCs/messages/enums\n");
+                    out.push_str("- Run `run_diagnostics` and service-level tests\n\n");
+                    out.push_str("Suggested CortexAST probes (fast, AST-accurate):\n");
+                    out.push_str("- `map_repo` with `search_filter` set to the service/message name\n");
+                    out.push_str("- `find_usages` for each renamed message/service to find all consumers\n");
+                } else {
+                    out.push_str("Checklist (API change propagation):\n");
+                    out.push_str("- `find_usages` on the changed symbol(s) to locate all call sites\n");
+                    out.push_str("- `call_hierarchy` to understand blast radius before refactoring\n");
+                    out.push_str("- Update dependent modules/services and re-run `run_diagnostics`\n");
+                }
+
+                ok(out)
             }
             _ => err(format!("Tool not found: {name}")),
         }

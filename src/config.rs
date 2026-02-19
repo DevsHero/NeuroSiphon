@@ -46,7 +46,7 @@ impl Default for TokenEstimatorConfig {
 /// Configuration for handling huge monorepo / multi-service workspaces.
 ///
 /// Activated automatically when a workspace has many services, or explicitly with
-/// `--huge` CLI flag, or by setting `huge_codebase.enabled = true` in `.neurosiphon.json`.
+/// `--huge` CLI flag, or by setting `huge_codebase.enabled = true` in `.cortexast.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HugeCodebaseConfig {

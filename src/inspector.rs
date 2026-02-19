@@ -1980,6 +1980,7 @@ fn rust_impl_byte_ranges(
 /// raw AST, not an LSP or compiler.
 pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
     use ignore::WalkBuilder;
+    use std::collections::BTreeMap;
 
     let abs_dir: PathBuf = if target_dir.is_absolute() {
         target_dir.to_path_buf()
@@ -2030,21 +2031,22 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         let root = tree.root_node();
 
         // AST-level reference collection — excludes comments and string literals.
-        let mut hit_rows: Vec<u32> = Vec::new();
-        collect_identifier_refs(root, source, symbol_name, &mut hit_rows);
+        let mut hits: Vec<(u32, &'static str)> = Vec::new();
+        collect_identifier_refs(root, source, symbol_name, &mut hits);
 
-        if hit_rows.is_empty() {
+        if hits.is_empty() {
             continue;
         }
 
-        hit_rows.sort();
-        hit_rows.dedup();
+        hits.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+        hits.dedup();
 
         let text_lines: Vec<&str> = source_text.lines().collect();
         let display_path = path.to_string_lossy();
 
-        for row_0 in hit_rows {
+        for (row_0, category) in hits {
             all_results.push(UsageMatch {
+                category,
                 file: display_path.to_string(),
                 line_1: row_0 + 1,
                 context: extract_context_lines(&text_lines, row_0 as usize, 2),
@@ -2060,15 +2062,40 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         ));
     }
 
-    let mut out = format!("{} usage(s) of `{symbol_name}` found:\n\n", all_results.len());
-    for m in &all_results {
-        out.push_str(&format!("[{}:{}]\n", m.file, m.line_1));
-        out.push_str(&format!("Context:\n{}\n\n", m.context));
+    let mut by_cat: BTreeMap<&'static str, Vec<UsageMatch>> = BTreeMap::new();
+    for m in all_results {
+        by_cat.entry(m.category).or_default().push(m);
     }
+
+    let order: [&'static str; 4] = ["Calls", "Type Refs", "Field Inits", "Other"];
+    let total: usize = by_cat.values().map(|v| v.len()).sum();
+    let mut out = format!("{} usage(s) of `{symbol_name}` found:\n\n", total);
+
+    for cat in order {
+        let Some(mut items) = by_cat.remove(cat) else { continue };
+        items.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line_1.cmp(&b.line_1)));
+        out.push_str(&format!("### {cat} ({})\n\n", items.len()));
+        for m in &items {
+            out.push_str(&format!("[{}:{}]\n", m.file, m.line_1));
+            out.push_str(&format!("Context:\n{}\n\n", m.context));
+        }
+    }
+
+    // Any future categories (shouldn't happen) — append deterministically.
+    for (cat, mut items) in by_cat {
+        items.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line_1.cmp(&b.line_1)));
+        out.push_str(&format!("### {cat} ({})\n\n", items.len()));
+        for m in &items {
+            out.push_str(&format!("[{}:{}]\n", m.file, m.line_1));
+            out.push_str(&format!("Context:\n{}\n\n", m.context));
+        }
+    }
+
     Ok(out)
 }
 
 struct UsageMatch {
+    category: &'static str,
     file: String,
     line_1: u32,
     context: String,
@@ -2076,7 +2103,7 @@ struct UsageMatch {
 
 /// Recursively collect AST leaf identifier nodes that match `symbol_name`,
 /// skipping comment and string-literal subtrees entirely.
-fn collect_identifier_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec<u32>) {
+fn collect_identifier_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec<(u32, &'static str)>) {
     let kind = node.kind();
 
     // Prune entire comment / string subtrees — no matches inside these nodes.
@@ -2112,7 +2139,7 @@ fn collect_identifier_refs(node: Node, source: &[u8], symbol_name: &str, out: &m
             let slice = &source[node.start_byte()..node.end_byte()];
             if let Ok(text) = std::str::from_utf8(slice) {
                 if text == symbol_name {
-                    out.push(node.start_position().row as u32);
+                    out.push((node.start_position().row as u32, usage_category(node)));
                 }
             }
         }
@@ -2124,6 +2151,57 @@ fn collect_identifier_refs(node: Node, source: &[u8], symbol_name: &str, out: &m
     for child in node.children(&mut cursor) {
         collect_identifier_refs(child, source, symbol_name, out);
     }
+}
+
+fn has_ancestor_kind(mut node: Node, target_kinds: &[&str]) -> bool {
+    for _ in 0..8 {
+        let Some(parent) = node.parent() else { return false };
+        let k = parent.kind();
+        if target_kinds.iter().any(|t| *t == k) {
+            return true;
+        }
+        node = parent;
+    }
+    false
+}
+
+fn usage_category(node: Node) -> &'static str {
+    let kind = node.kind();
+
+    if kind == "type_identifier" {
+        return "Type Refs";
+    }
+
+    // Proto + other grammars: type refs are usually nested under these nodes.
+    if has_ancestor_kind(node, &["message_name", "enum_name", "service_name", "message_or_enum_type", "type"]) {
+        return "Type Refs";
+    }
+
+    if has_ancestor_kind(
+        node,
+        &[
+            "call_expression",
+            "call",
+            "function_call",
+            "method_invocation",
+            "invocation_expression",
+        ],
+    ) {
+        return "Calls";
+    }
+
+    // Field initializers (conservative): object/struct literal keys.
+    if matches!(
+        kind,
+        "field_identifier"
+            | "property_identifier"
+            | "shorthand_property_identifier"
+            | "shorthand_property_identifier_pattern"
+    ) && has_ancestor_kind(node, &["field_initializer", "property_assignment", "pair"]) {
+        return "Field Inits";
+    }
+
+    "Other"
 }
 
 /// Build a 2×`ctx`-line context block around `target_0` (0-indexed), marking the
@@ -2169,6 +2247,10 @@ fn extract_context_lines(lines: &[&str], target_0: usize, ctx: usize) -> String 
 ///       [struct  ] User
 /// ```
 pub fn repo_map(target_dir: &Path) -> Result<String> {
+    repo_map_with_filter(target_dir, None)
+}
+
+pub fn repo_map_with_filter(target_dir: &Path, search_filter: Option<&str>) -> Result<String> {
     use ignore::WalkBuilder;
     use std::collections::BTreeMap;
 
@@ -2189,6 +2271,7 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
         .build();
 
     let cfg = language_config();
+    let filter_lc = search_filter.map(|s| s.to_ascii_lowercase());
 
     // dir_rel → Vec<(filename, Vec<(kind, name)>)>
     let mut by_dir: BTreeMap<String, Vec<(String, Vec<(String, String)>)>> = BTreeMap::new();
@@ -2207,6 +2290,7 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
             Ok(r) => r,
             Err(_) => continue,
         };
+        let rel_path = rel_from_target.to_string_lossy().replace('\\', "/");
         let dir_rel = rel_from_target
             .parent()
             .map(|p| p.to_string_lossy().replace('\\', "/"))
@@ -2220,18 +2304,27 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
 
         // Read source once; use extract_symbols_from_source (never fails on bad
         // queries) then filter to "public" symbols with a language-aware heuristic.
-        let sym_pairs: Vec<(String, String)> = if let Ok(source_text) = std::fs::read_to_string(path) {
-            let syms = extract_symbols_from_source(path, &source_text);
-            let source_lines: Vec<&str> = source_text.lines().collect();
+        let Ok(source_text) = std::fs::read_to_string(path) else { continue };
+        let syms = extract_symbols_from_source(path, &source_text);
+        let source_lines: Vec<&str> = source_text.lines().collect();
 
-            syms.into_iter()
-                .filter(|s| is_public_symbol(s, &source_lines, path))
-                .take(MAX_SYMS_PER_FILE)
-                .map(|s| (s.kind.clone(), s.name.clone()))
-                .collect()
-        } else {
-            vec![]
-        };
+        let sym_pairs: Vec<(String, String)> = syms
+            .into_iter()
+            .filter(|s| is_public_symbol(s, &source_lines, path))
+            .take(MAX_SYMS_PER_FILE)
+            .map(|s| (s.kind.clone(), s.name.clone()))
+            .collect();
+
+        // Optional narrowing: keep only matching files/symbols.
+        if let Some(f) = &filter_lc {
+            let rel_match = rel_path.to_ascii_lowercase().contains(f);
+            let sym_match = sym_pairs
+                .iter()
+                .any(|(_k, n)| n.to_ascii_lowercase().contains(f));
+            if !(rel_match || sym_match) {
+                continue;
+            }
+        }
 
         by_dir.entry(dir_rel).or_default().push((filename, sym_pairs));
     }

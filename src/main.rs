@@ -182,17 +182,19 @@ fn main() -> Result<()> {
     // Hybrid search mode: build/update local vector index, retrieve relevant files, then slice only those.
     let (xml, target_label) = if let Some(q) = cli.query.as_ref() {
         let index_target = cli.target.clone().unwrap_or_else(|| PathBuf::from("."));
+        let mut exclude_dir_names = vec![
+            ".git".into(),
+            "node_modules".into(),
+            "dist".into(),
+            "target".into(),
+            cfg.output_dir.to_string_lossy().to_string(),
+        ];
+        exclude_dir_names.extend(cfg.scan.exclude_dir_names.iter().cloned());
         let opts = ScanOptions {
             repo_root: repo_root.clone(),
             target: index_target.clone(),
             max_file_bytes: cfg.token_estimator.max_file_bytes,
-            exclude_dir_names: vec![
-                ".git".into(),
-                "node_modules".into(),
-                "dist".into(),
-                "target".into(),
-                cfg.output_dir.to_string_lossy().to_string(),
-            ],
+            exclude_dir_names,
         };
 
         let scan_spinner = ProgressBar::new_spinner();

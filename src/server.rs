@@ -318,14 +318,20 @@ impl ServerState {
         budget_tokens: usize,
         cfg: &crate::config::Config,
     ) -> anyhow::Result<String> {
+        let mut exclude_dir_names = vec![
+            ".git".into(),
+            "node_modules".into(),
+            "dist".into(),
+            "target".into(),
+            cfg.output_dir.to_string_lossy().to_string(),
+        ];
+        exclude_dir_names.extend(cfg.scan.exclude_dir_names.iter().cloned());
+
         let opts = ScanOptions {
             repo_root: repo_root.clone(),
             target: target.clone(),
             max_file_bytes: cfg.token_estimator.max_file_bytes,
-            exclude_dir_names: vec![
-                ".git".into(), "node_modules".into(), "dist".into(),
-                "target".into(), cfg.output_dir.to_string_lossy().to_string(),
-            ],
+            exclude_dir_names,
         };
         let entries = scan_workspace(&opts)?;
 

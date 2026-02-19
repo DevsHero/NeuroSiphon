@@ -573,6 +573,9 @@ fn build_scan_options(repo_root: &Path, target: &Path, cfg: &Config) -> ScanOpti
         cfg.output_dir.to_string_lossy().to_string(),
     ];
 
+    // User-defined additional excludes (directory names).
+    exclude_dirs.extend(cfg.scan.exclude_dir_names.iter().cloned());
+
     // Only exclude `target` and `dist` as top-level build dirs, not when they are
     // a user's *intended scanning target*.
     let target_abs = if target.is_absolute() {
@@ -655,6 +658,12 @@ pub fn slice_to_xml_huge(repo_root: &Path, budget_tokens: usize, cfg: &Config) -
                 // We include at most the top-level files, not the entire sub-dirs.
             ],
         };
+
+        // Add user-defined excludes.
+        let mut root_opts = root_opts;
+        root_opts
+            .exclude_dir_names
+            .extend(cfg.scan.exclude_dir_names.iter().cloned());
 
         // Scan but only take files directly at root (depth == 0 components beyond root).
         if let Ok(root_entries) = scan_workspace(&root_opts) {

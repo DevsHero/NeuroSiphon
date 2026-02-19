@@ -61,6 +61,9 @@ Example:
 ```json
 {
   "output_dir": ".neurosiphon",
+  "scan": {
+    "exclude_dir_names": ["generated", "tmp", "fixtures"]
+  },
   "skeleton_mode": true,
   "vector_search": {
     "model": "minishlab/potion-base-8M",

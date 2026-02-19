@@ -8,6 +8,27 @@ pub struct TokenEstimatorConfig {
     pub max_file_bytes: u64,
 }
 
+/// Controls workspace scanning behavior (what to skip).
+///
+/// Note: `.gitignore` is always respected by the scanner; these are additional
+/// hard skips for noisy monorepo directories.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanConfig {
+    /// Directory *names* to skip anywhere in the tree (e.g. "generated", "tmp").
+    ///
+    /// These are compared against path components, not full paths.
+    pub exclude_dir_names: Vec<String>,
+}
+
+impl Default for ScanConfig {
+    fn default() -> Self {
+        Self {
+            exclude_dir_names: vec![],
+        }
+    }
+}
+
 /// Hard safety ceiling: files larger than this are **always** skipped, regardless of config.
 /// This protects low-RAM machines from trying to Tree-sitter-parse a 10 MB minified bundle.
 pub const ABSOLUTE_MAX_FILE_BYTES: u64 = 1_000_000; // 1 MB
@@ -74,6 +95,8 @@ impl Default for HugeCodebaseConfig {
 #[serde(default)]
 pub struct Config {
     pub output_dir: PathBuf,
+    /// Settings that govern file discovery and exclusion.
+    pub scan: ScanConfig,
     pub token_estimator: TokenEstimatorConfig,
     /// When true, generate "skeleton" file content (function bodies pruned) for supported languages.
     pub skeleton_mode: bool,
@@ -109,6 +132,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             output_dir: PathBuf::from(".neurosiphon"),
+            scan: ScanConfig::default(),
             token_estimator: TokenEstimatorConfig::default(),
             skeleton_mode: true,
             vector_search: VectorSearchConfig::default(),

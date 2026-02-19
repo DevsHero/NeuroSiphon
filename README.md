@@ -283,6 +283,18 @@ NeuroSiphon ships production-grade support for the most complex repository struc
 
 ```json
 {
+  "vector_search": {
+    "model": "minishlab/potion-retrieval-32M",
+    "chunk_lines": 40,
+    "default_query_limit": 30
+  },
+  "token_estimator": {
+    "chars_per_token": 4,
+    "max_file_bytes": 524288
+  },
+  "scan": {
+    "exclude_dir_names": ["generated", "tmp", "fixtures"]
+  },
   "huge_codebase": {
     "enabled": true,
     "member_scan_depth": 3,

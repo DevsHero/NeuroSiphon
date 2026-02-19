@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 #[test]
 fn mcp_stdio_smoke() {
     // `cargo test` sets this for integration tests.
-    let bin = env!("CARGO_BIN_EXE_neurosiphon");
+    let bin = env!("CARGO_BIN_EXE_cortexast");
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let mut child = Command::new(bin)
@@ -14,7 +14,7 @@ fn mcp_stdio_smoke() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn neurosiphon mcp");
+        .expect("spawn cortexast mcp");
 
     {
         let stdin = child.stdin.as_mut().expect("child stdin");
@@ -51,8 +51,8 @@ fn mcp_stdio_smoke() {
                 "id": 3,
                 "method": "tools/call",
                 "params": {
-                    "name": "get_repo_map",
-                    "arguments": { "repoPath": repo_root }
+                    "name": "map_repo",
+                    "arguments": { "repoPath": repo_root, "target_dir": "." }
                 }
             })
         )
@@ -66,8 +66,8 @@ fn mcp_stdio_smoke() {
                 "id": 4,
                 "method": "tools/call",
                 "params": {
-                    "name": "read_file_skeleton",
-                    "arguments": { "repoPath": repo_root, "path": "src/inspector.rs" }
+                    "name": "read_symbol",
+                    "arguments": { "repoPath": repo_root, "path": "src/inspector.rs", "symbol_name": "LanguageDriver" }
                 }
             })
         )
@@ -121,19 +121,19 @@ fn mcp_stdio_smoke() {
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
-        for required in ["get_context_slice", "get_repo_map", "read_file_skeleton", "read_file_full"] {
+        for required in ["get_context_slice", "map_repo", "read_symbol", "find_usages", "run_diagnostics"] {
             assert!(names.contains(required), "missing tool: {required}");
         }
     }
 
-    // get_repo_map
+    // map_repo
     {
-        let v = replies_by_id.get(&3).expect("get_repo_map reply");
+        let v = replies_by_id.get(&3).expect("map_repo reply");
         let result = v.get("result").expect("tools/call result");
         assert_eq!(
             result.get("isError").and_then(|x| x.as_bool()),
             Some(false),
-            "get_repo_map should not error"
+            "map_repo should not error"
         );
         let text = result
             .get("content")
@@ -141,15 +141,14 @@ fn mcp_stdio_smoke() {
             .and_then(|a| a.first())
             .and_then(|x| x.get("text"))
             .and_then(|x| x.as_str())
-            .expect("repo map json string");
-        let map_v: serde_json::Value = serde_json::from_str(text).expect("repo map is json");
-        assert!(map_v.get("nodes").and_then(|x| x.as_array()).is_some());
-        assert!(map_v.get("edges").and_then(|x| x.as_array()).is_some());
+            .expect("map_repo text");
+        assert!(!text.is_empty(), "map_repo should return a non-empty text map");
+        assert!(text.contains("src/"), "map_repo should reference src/ directory");
     }
 
-    // read_file_skeleton
+    // read_symbol
     {
-        let v = replies_by_id.get(&4).expect("read_file_skeleton reply");
+        let v = replies_by_id.get(&4).expect("read_symbol reply");
         let result = v.get("result").expect("tools/call result");
         assert_eq!(result.get("isError").and_then(|x| x.as_bool()), Some(false));
         let text = result
@@ -158,7 +157,10 @@ fn mcp_stdio_smoke() {
             .and_then(|a| a.first())
             .and_then(|x| x.get("text"))
             .and_then(|x| x.as_str())
-            .expect("skeleton text");
-        assert!(text.contains("trait LanguageDriver") || text.contains("struct RustDriver"));
+            .expect("read_symbol text");
+        assert!(
+            text.contains("LanguageDriver") || text.contains("trait ") || text.contains("fn "),
+            "read_symbol should return source containing the symbol"
+        );
     }
 }

@@ -41,23 +41,27 @@ Restart your MCP client.
 ## 3) MCP Tools
 
 ```
-├─ get_context_slice(target, budget_tokens?, repoPath?, query?, query_limit?)
-│  └─ Returns: XML context slice
-├─ get_repo_map(scope?, repoPath?)
-│  └─ Returns: JSON repo map (nodes + edges)
-├─ read_file_skeleton(path, repoPath?)
-│  └─ Returns: Low-token skeleton view
-└─ read_file_full(path, repoPath?)
-   └─ Returns: Full raw file content
+├─ get_context_slice(target, budget_tokens?, query?, query_limit?, repoPath?)
+│  └─ Returns: token-budget-aware XML slice (skeletonized source)
+├─ map_repo(target_dir, repoPath?)
+│  └─ Returns: compact hierarchical text map of files + public symbols
+├─ read_symbol(path, symbol_name, repoPath?)
+│  └─ Returns: exact full source of a single symbol via AST
+├─ find_usages(target_dir, symbol_name, repoPath?)
+│  └─ Returns: all semantic references (no comment/string noise)
+├─ call_hierarchy(target_dir, symbol_name, repoPath?)
+│  └─ Returns: definition location + outgoing calls + incoming callers
+└─ run_diagnostics(repoPath)
+   └─ Returns: compiler errors pinned to file:line with code context
 
 Chronos (AST Time Machine):
 
-├─ chronos_checkpoint(path, symbol_name, semantic_tag, repoPath?)
-│  └─ Saves a disk-backed snapshot under `.cortexast/checkpoints/` (default)
-├─ chronos_list(repoPath?)
+├─ save_checkpoint(path, symbol_name, semantic_tag, repoPath?)
+│  └─ Saves a disk-backed snapshot under `.cortexast/checkpoints/`
+├─ list_checkpoints(repoPath?)
 │  └─ Lists available semantic tags + stored symbols
-└─ chronos_compare(symbol_name, tag_a, tag_b, path?, repoPath?)
-  └─ Displays Tag A and Tag B symbol code blocks (no unified diff)
+└─ compare_checkpoint(symbol_name, tag_a, tag_b, path?, repoPath?)
+   └─ Displays Tag A and Tag B symbol code blocks (no unified diff)
 ```
 
 ## 4) Optional Repo Config

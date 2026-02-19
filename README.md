@@ -71,17 +71,17 @@ It parses your code (AST), understands structure, nukes the fat, and feeds the L
 
 CortexAST now exposes **nine** AST-powered MCP tools. The three latest give an LLM a God-tier view of any codebase with zero token waste.
 
-- **`cortex_repo_map`** (The God's Eye)
+- **`map_repo`** (The God's Eye)
   - Args: `target_dir`
   - Returns a compact **hierarchical text tree** of every source file grouped by directory, listing only **exported/public symbols** per file.
   - Capped at ~8 000 chars. Perfect for orientation before diving deeper.
 
-- **`cortex_call_hierarchy`** (The Call Graph)
+- **`call_hierarchy`** (The Call Graph)
   - Args: `target_dir`, `symbol_name`
   - Returns three sections: **Definition** location, **Outgoing calls** (callees inside the body), and **Incoming calls** (all callers with enclosing function context).
   - Works without compilation — raw tree-sitter AST only.
 
-- **`cortex_diagnostics`** (The Compiler Oracle)
+- **`run_diagnostics`** (The Compiler Oracle)
   - Args: `repoPath`
   - Auto-detects project type (`Cargo.toml` → `cargo check`; `package.json` → `tsc --noEmit`).
   - Returns a structured Markdown error report pinned to file:line with 1-line code context per error.
@@ -92,12 +92,12 @@ CortexAST now exposes **nine** AST-powered MCP tools. The three latest give an L
 
 CortexAST exposes two earlier AST-powered tools designed to *avoid heavy full-file reads* and *avoid noisy grep*.
 
-- **`cortex_read_symbol`** (The X-Ray)
+- **`read_symbol`** (The X-Ray)
   - Args: `path`, `symbol_name`
   - Returns the **full, unpruned** source of that symbol by extracting the exact Tree-sitter byte range.
   - Best for: “Show me the full implementation of `ConvertRequest`.”
 
-- **`cortex_find_usages`** (The AST-Tracer)
+- **`find_usages`** (The AST-Tracer)
   - Args: `target_dir`, `symbol_name`
   - Walks files with `ignore` + parses with Tree-sitter.
   - Matches only semantic identifier nodes (not comments/strings) and returns a dense list of:
@@ -194,11 +194,11 @@ CortexAST will:
 
 If the LLM needs precise information without reading whole files:
 
-- Get a codebase bird's-eye view via `cortex_repo_map`
-- Trace full call graphs (incoming + outgoing) via `cortex_call_hierarchy`
-- Ask for a symbol implementation via `cortex_read_symbol`
-- Trace semantic usages across the repo via `cortex_find_usages`
-- Run compiler diagnostics and get pinned errors via `cortex_diagnostics`
+- Get a codebase bird's-eye view via `map_repo`
+- Trace full call graphs (incoming + outgoing) via `call_hierarchy`
+- Ask for a symbol implementation via `read_symbol`
+- Trace semantic usages across the repo via `find_usages`
+- Run compiler diagnostics and get pinned errors via `run_diagnostics`
 
 These work even when the repo doesn’t compile and the LSP is broken.
 
@@ -207,16 +207,16 @@ These work even when the repo doesn’t compile and the LSP is broken.
 ## 🗒️ Changelog
 
 ### v1.3.0
-- **`cortex_repo_map`** — compact hierarchical codebase map: directories + exported symbols, ~8 000-char budget
-- **`cortex_call_hierarchy`** — outgoing call targets (tree-sitter `call_expression` extraction) + incoming callers with enclosing-function context
-- **`cortex_diagnostics`** — auto-detect Rust/TypeScript project, run `cargo check` / `tsc --noEmit`, parse structured JSON output, return pinned errors with code snippets
+- **`map_repo`** — compact hierarchical codebase map: directories + exported symbols, ~8 000-char budget
+- **`call_hierarchy`** — outgoing call targets (tree-sitter `call_expression` extraction) + incoming callers with enclosing-function context
+- **`run_diagnostics`** — auto-detect Rust/TypeScript project, run `cargo check` / `tsc --noEmit`, parse structured JSON output, return pinned errors with code snippets
 
 ### v1.2.0
 
 - **Vector index v2**: deterministic cache invalidation via **xxh3 content hashing** (no more mtime/git-checkout drift)
 - **AST-aware semantic chunking**: large files embed as multiple chunks (less vector dilution)
 - **Symbol anchoring**: boosts results when query contains an exact symbol name
-- **New MCP tools**: `cortex_read_symbol` and `cortex_find_usages`
+- **New MCP tools**: `read_symbol` and `find_usages`
 
 ### Manual (CLI)
 

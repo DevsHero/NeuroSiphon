@@ -1687,7 +1687,7 @@ pub fn extract_symbols_from_source(path: &Path, source_text: &str) -> Vec<Symbol
 }
 
 // ---------------------------------------------------------------------------
-// Tool: neurosiphon_read_symbol — The X-Ray
+// Tool: read_symbol — The X-Ray
 // ---------------------------------------------------------------------------
 
 /// Extract the full, unpruned source of a specific named symbol from `path`.
@@ -1883,7 +1883,7 @@ fn rust_impl_byte_ranges(
 }
 
 // ---------------------------------------------------------------------------
-// Tool: neurosiphon_find_usages — The AST-Tracer
+// Tool: find_usages — The AST-Tracer
 // ---------------------------------------------------------------------------
 
 /// Find all semantic usages of `symbol_name` across code files under `target_dir`.
@@ -2066,7 +2066,7 @@ fn extract_context_lines(lines: &[&str], target_0: usize, ctx: usize) -> String 
 }
 
 // ---------------------------------------------------------------------------
-// Tool: neurosiphon_repo_map — The God's Eye View
+// Tool: map_repo — The God's Eye View
 // ---------------------------------------------------------------------------
 
 /// Build a human-readable hierarchical text map of the codebase showing file
@@ -2228,7 +2228,7 @@ fn is_public_symbol(sym: &Symbol, source_lines: &[&str], path: &Path) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Tool: neurosiphon_call_hierarchy — The Call Graph
+// Tool: call_hierarchy — The Call Graph
 // ---------------------------------------------------------------------------
 
 /// Language-agnostic deny-list of common stdlib / runtime method names that
@@ -2579,7 +2579,7 @@ fn extract_trailing_call_identifier<'a>(target: Node, source: &'a [u8]) -> Optio
 }
 
 // ---------------------------------------------------------------------------
-// Tool: neurosiphon_diagnostics — The Compiler Oracle
+// Tool: run_diagnostics — The Compiler Oracle
 // ---------------------------------------------------------------------------
 
 /// Run the project's native diagnostics tool and return a structured report
@@ -2612,7 +2612,7 @@ pub fn run_diagnostics(repo_root: &Path) -> Result<String> {
     if !has_cargo && !has_package_json {
         return Ok(format!(
             "No Cargo.toml or package.json found in {}.\n\
-             `neurosiphon_diagnostics` supports Rust (`cargo check`) and \
+             `run_diagnostics` supports Rust (`cargo check`) and \
              TypeScript (`tsc --noEmit`) projects.",
             abs_root.display()
         ));

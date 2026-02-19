@@ -49,12 +49,15 @@ use crate::scanner::{scan_workspace, ScanOptions};
 //     Fallback: line-range splitting when tree-sitter returns no symbols.
 //     Result: a 5000-line file becomes ~10 focused chunks, each highly semantic.
 //
-//  3. SYMBOL ANCHORING (Task 3)
-//     Every chunk stores the names of its contained symbols.
-//     During search: standard cosine score + SYMBOL_MATCH_BOOST when the query
-//     contains an exact symbol name token.
-//     Result: "How does ConvertRequest work?" deterministically surfaces the
-//     ConvertRequest chunk, regardless of vector distance.
+//  3. SYMBOL SNIPER — 2-Stage Hybrid Router
+//     Every chunk stores the names of its contained symbols (format: "kind name").
+//     Stage 1 — Sniper: query tokens are matched exactly (case-insensitive, no
+//     CamelCase splitting) against symbol names (kind prefix stripped). Exact
+//     matches receive EXACT_SYMBOL_SCORE (2.0), bypassing vector math entirely.
+//     Stage 2 — Semantic Fallback: all non-exact files are scored via max cosine
+//     over their chunks (≤ 1.0). Exact hits mathematically crush semantic hits.
+//     Result: "ConvertRequest" always lands above unrelated .proto/.json files
+//     regardless of embedding proximity — zero false-positives from topic overlap.
 //
 //  Search complexity: O(n_chunks × d). With 400 files × avg 3 chunks × 256 dims ≈ trivial.
 //  Measured latency: ≤ 0.07s cold (unchanged from v1 on typical repos).
@@ -66,9 +69,10 @@ const SMALL_FILE_BYTES: u64 = 8 * 1024; // 8 KB
 /// Maximum source lines per AST chunk.
 const CHUNK_MAX_LINES: u32 = 80;
 
-/// Additive score boost when the query contains an exact symbol name.
-/// Value is additive (not multiplicative) to keep the score range predictable.
-const SYMBOL_MATCH_BOOST: f32 = 0.45;
+/// Guaranteed score assigned to any file that contains an exact symbol match.
+/// Sits permanently above the cosine ceiling (1.0), making exact hits
+/// mathematically unbeatable by any semantic score.
+const EXACT_SYMBOL_SCORE: f32 = 2.0;
 
 // ---------------------------------------------------------------------------
 // Schema structs
@@ -582,15 +586,20 @@ impl CodebaseIndex {
         Ok(())
     }
 
-    // ── Search with symbol anchoring (Task 3) ─────────────────────────────
+    // ── Search — 2-Stage Hybrid Router (Symbol Sniper) ────────────────────
 
-    /// Vector search with symbol anchoring.
+    /// Vector search with deterministic symbol sniper.
     ///
-    /// 1. Embed the query.
-    /// 2. For each file, take the MAX cosine across all its chunks.
-    /// 3. Apply SYMBOL_MATCH_BOOST if any chunk's symbol list overlaps with
-    ///    the query's token set (exact, case-insensitive).
-    /// 4. Return top-`limit` paths sorted by boosted score.
+    /// **Stage 1 — Sniper (exact match)**
+    /// Tokenize the query on whitespace/punctuation (no CamelCase splitting).
+    /// Compare each token against every chunk's symbol names (kind prefix stripped,
+    /// both lowercased). On an exact hit the file receives `EXACT_SYMBOL_SCORE`
+    /// (2.0) — no vector math involved. Exact matches always rank above Stage 2.
+    ///
+    /// **Stage 2 — Semantic fallback**
+    /// Files with no exact symbol match are scored by the max cosine similarity
+    /// across all their chunks (range 0.0–1.0). Since 1.0 < 2.0, no semantic
+    /// result can ever outrank a sniper hit.
     pub async fn search(&mut self, query: &str, limit: usize) -> Result<Vec<String>> {
         if self.store.entries.is_empty() {
             return Ok(vec![]);
@@ -598,9 +607,12 @@ impl CodebaseIndex {
 
         let qv = self.model.encode_single(&format!("query: {}", query));
         let query_lower = query.to_lowercase();
+
+        // Tokenize on whitespace + punctuation. No CamelCase splitting to avoid
+        // broad noise (e.g. "Request" matching unrelated HTTP files).
         let query_tokens: HashSet<String> = query_lower
             .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .filter(|t| t.len() >= 3) // skip tiny noise tokens
+            .filter(|t| t.len() >= 2)
             .map(|t| t.to_string())
             .collect();
 
@@ -609,37 +621,18 @@ impl CodebaseIndex {
             .entries
             .iter()
             .map(|(path, file_entry)| {
-                // Max cosine across chunks.
-                let base = file_entry
-                    .chunks
-                    .iter()
-                    .map(|c| cosine_similarity(&qv, &c.vector))
-                    .fold(f32::NEG_INFINITY, f32::max);
-
-                // Symbol boost: any symbol name token present in query?
-                let boosted = file_entry.chunks.iter().any(|chunk| {
-                    chunk.symbols.iter().any(|sym| {
-                        let sym_lower = sym.to_lowercase();
-                        // Full symbol match (e.g. "ConvertRequest" in query).
-                        if query_lower.contains(&sym_lower) {
-                            return true;
-                        }
-                        // Token-level match (e.g. symbol = "fn process_embeddings",
-                        // query token = "process_embeddings").
-                        sym_lower
-                            .split(|c: char| !c.is_alphanumeric() && c != '_')
-                            .filter(|t| t.len() >= 3)
-                            .any(|tok| query_tokens.contains(tok))
-                    })
-                });
-
-                (base + if boosted { SYMBOL_MATCH_BOOST } else { 0.0 }, path.as_str())
+                let score = score_file_entry(&query_tokens, &qv, file_entry);
+                (score, path.as_str())
             })
             .collect();
 
         scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        Ok(scores.into_iter().take(limit).map(|(_, p)| p.replace('\\', "/")).collect())
+        Ok(scores
+            .into_iter()
+            .take(limit)
+            .map(|(_, p)| p.replace('\\', "/"))
+            .collect())
     }
 }
 
@@ -667,5 +660,152 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
     dot / (norm_a * norm_b)
+}
+
+/// Pure scoring function for a single file entry — extracted for unit testability.
+///
+/// Returns `EXACT_SYMBOL_SCORE` (2.0) when any chunk's bare symbol name
+/// (kind prefix stripped, lowercased) exactly matches a query token.
+/// Falls back to max cosine similarity across chunks otherwise.
+#[inline]
+fn score_file_entry(
+    query_tokens: &HashSet<String>,
+    query_vector: &[f32],
+    file_entry: &FileIndexEntry,
+) -> f32 {
+    // Stage 1 — Sniper: exact token ↔ symbol name match.
+    let has_exact = file_entry.chunks.iter().any(|chunk| {
+        chunk.symbols.iter().any(|sym| {
+            // Symbols stored as "kind name" (e.g. "fn ConvertRequest").
+            // Strip kind prefix to get bare name for exact comparison.
+            let bare = sym
+                .split_whitespace()
+                .last()
+                .unwrap_or(sym.as_str())
+                .to_lowercase();
+            query_tokens.contains(&bare)
+        })
+    });
+
+    if has_exact {
+        return EXACT_SYMBOL_SCORE;
+    }
+
+    // Stage 2 — Semantic fallback: max cosine across chunks (≤ 1.0).
+    file_entry
+        .chunks
+        .iter()
+        .map(|c| cosine_similarity(query_vector, &c.vector))
+        .fold(f32::NEG_INFINITY, f32::max)
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests — Symbol Sniper proof
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a mock FileIndexEntry with `symbols` in a single chunk.
+    /// The stored vector is set to the given value replicated to 4 dims (enough
+    /// for cosine math in isolation; production uses 256 dims).
+    fn mock_entry(symbols: Vec<&str>, vector: Vec<f32>) -> FileIndexEntry {
+        FileIndexEntry {
+            hash: "deadbeef".into(),
+            size: 1,
+            chunks: vec![ChunkEntry {
+                symbols: symbols.into_iter().map(str::to_string).collect(),
+                start_line: 0,
+                end_line: 10,
+                vector,
+            }],
+        }
+    }
+
+    fn tokens(query: &str) -> HashSet<String> {
+        query
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|t| t.len() >= 2)
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Prove the sniper gives EXACT_SYMBOL_SCORE (2.0) for an exact name match
+    /// and that the score ceiling for a non-matching file is ≤ 1.0.
+    #[test]
+    fn sniper_exact_match_crushes_semantic_result() {
+        // ── Arrange ──────────────────────────────────────────────────────
+        // Query: "How does ConvertRequest work? source_format_hint"
+        let query = "How does ConvertRequest work? source_format_hint";
+        let toks = tokens(query);
+
+        // convert_request.rs — contains the symbol. Deliberately give it a
+        // weak vector (not aligned with query direction) to prove the score
+        // comes purely from the sniper, not from cosine.
+        let rust_entry = mock_entry(
+            vec!["fn convert_request", "impl ConvertRequest"],
+            vec![0.1, 0.1, 0.1, 0.1],
+        );
+
+        // engine.proto — no matching symbol. Give it a near-perfect cosine
+        // with the query vector to simulate the old false-positive collision.
+        let proto_entry = mock_entry(
+            vec!["message EngineProto", "rpc ConvertStream"],
+            vec![0.99, 0.99, 0.0, 0.0],
+        );
+
+        // Query vector aligned with engine.proto to maximise its cosine score.
+        let qv = vec![1.0f32, 1.0, 0.0, 0.0];
+
+        // ── Act ───────────────────────────────────────────────────────────
+        let rust_score  = score_file_entry(&toks, &qv, &rust_entry);
+        let proto_score = score_file_entry(&toks, &qv, &proto_entry);
+
+        // ── Assert ────────────────────────────────────────────────────────
+        // 1. The Rust file must receive EXACT_SYMBOL_SCORE (2.0).
+        assert_eq!(
+            rust_score, EXACT_SYMBOL_SCORE,
+            "Rust file with exact symbol match must score {EXACT_SYMBOL_SCORE}"
+        );
+
+        // 2. proto score ≤ 1.0 (pure cosine; we expect ~0.99 here).
+        assert!(
+            proto_score <= 1.0,
+            "Semantic-only file score must be ≤ 1.0, got {proto_score}"
+        );
+
+        // 3. The Rust file MUST outrank the proto file — the key invariant.
+        assert!(
+            rust_score > proto_score,
+            "Rust ({rust_score}) must beat proto ({proto_score}) — sniper failed"
+        );
+
+        // Print the proof table for the CI log.
+        println!("\n═══ Symbol Sniper Proof ══════════════════════════════");
+        println!("  src/convert_request.rs   score = {rust_score:.4}  ← Stage 1 (Sniper)");
+        println!("  proto/engine.proto        score = {proto_score:.4}  ← Stage 2 (Cosine)");
+        println!("  Gap = {:.4}  (guaranteed ≥ {:.2})",
+            rust_score - proto_score,
+            EXACT_SYMBOL_SCORE - 1.0);
+        println!("══════════════════════════════════════════════════════\n");
+    }
+
+    /// Sniper must NOT fire on a partial substring match —
+    /// query "request" must NOT snipe a file with symbol "ConvertRequest".
+    #[test]
+    fn sniper_requires_exact_token_not_substring() {
+        let toks = tokens("request handling logic");
+        let entry = mock_entry(
+            vec!["impl ConvertRequest"],
+            vec![0.5, 0.5, 0.5, 0.5],
+        );
+        let qv = vec![0.0f32; 4];
+        let score = score_file_entry(&toks, &qv, &entry);
+        assert!(
+            score < EXACT_SYMBOL_SCORE,
+            "Partial substring 'request' must not trigger sniper for 'ConvertRequest'"
+        );
+    }
 }
 

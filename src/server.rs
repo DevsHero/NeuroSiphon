@@ -43,7 +43,8 @@ impl ServerState {
                             "properties": {
                                 "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
                                 "target_dir": { "type": "string", "description": "Directory to map (use '.' for whole repo)" },
-                                "search_filter": { "type": "string", "description": "Optional: case-insensitive filter to keep only matching files/symbols (helps avoid pagination)" }
+                                "search_filter": { "type": "string", "description": "Optional: case-insensitive filter to keep only matching files/symbols (helps avoid pagination)" },
+                                "max_chars": { "type": "integer", "description": "Optional: max output chars (default 32000). Raise for very large repos, lower to save tokens." }
                             },
                             "required": ["target_dir"]
                         }
@@ -323,8 +324,9 @@ impl ServerState {
                     return err("Missing target_dir".to_string());
                 };
                 let search_filter = args.get("search_filter").and_then(|v| v.as_str()).map(|s| s.trim()).filter(|s| !s.is_empty());
+                let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
                 let target_dir = resolve_path(&repo_root, target_str);
-                match repo_map_with_filter(&target_dir, search_filter) {
+                match repo_map_with_filter(&target_dir, search_filter, max_chars) {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("repo_map failed: {e}")),
                 }

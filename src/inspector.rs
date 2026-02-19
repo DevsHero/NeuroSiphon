@@ -775,6 +775,30 @@ impl LanguageDriver for RustDriver {
             "trait",
             false,
         )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(const_item name: (identifier) @name) @def"#,
+            "const",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(static_item name: (identifier) @name) @def"#,
+            "static",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(type_item name: (type_identifier) @name) @def"#,
+            "type",
+            false,
+        )?);
         Ok(symbols)
     }
 }
@@ -870,6 +894,31 @@ impl LanguageDriver for TypeScriptDriver {
             "function",
             true,
         )?);
+        // Top-level const/let (e.g. `const FOO = 42`, `const API_URL = "..."`).
+        // Single broad query anchored to program root — catches everything at module level.
+        // Dedup step below removes overlap with the arrow-function query above.
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(program (lexical_declaration (variable_declarator name: (identifier) @name)) @def)"#,
+            "const",
+            true,
+        ).unwrap_or_default());
+        // Exported const (e.g. `export const FOO = 42`).
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(export_statement declaration: (lexical_declaration (variable_declarator name: (identifier) @name)) @def)"#,
+            "const",
+            true,
+        ).unwrap_or_default());
+        // Dedup by (name, line): program-level queries overlap with the arrow-function query.
+        {
+            let mut seen = std::collections::HashSet::new();
+            symbols.retain(|s| seen.insert((s.name.clone(), s.line)));
+        }
 
         symbols.extend(run_query(
             source,
@@ -1068,6 +1117,15 @@ impl LanguageDriver for GoDriver {
             "type",
             false,
         )?);
+        // Package-level const declarations (e.g. `const MaxRetries = 5`).
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(const_spec name: (identifier) @name) @def"#,
+            "const",
+            false,
+        ).unwrap_or_default());
         Ok(symbols)
     }
 
@@ -1079,8 +1137,7 @@ impl LanguageDriver for GoDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/go_prune.scm"), "body")?;
-        Ok(bodies
+        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/go_prune.scm"), "body")?;        Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
             .collect())
@@ -2247,15 +2304,19 @@ fn extract_context_lines(lines: &[&str], target_0: usize, ctx: usize) -> String 
 ///       [struct  ] User
 /// ```
 pub fn repo_map(target_dir: &Path) -> Result<String> {
-    repo_map_with_filter(target_dir, None)
+    repo_map_with_filter(target_dir, None, None)
 }
 
-pub fn repo_map_with_filter(target_dir: &Path, search_filter: Option<&str>) -> Result<String> {
+pub fn repo_map_with_filter(
+    target_dir: &Path,
+    search_filter: Option<&str>,
+    max_chars: Option<usize>,
+) -> Result<String> {
     use ignore::WalkBuilder;
     use std::collections::BTreeMap;
 
     const MAX_SYMS_PER_FILE: usize = 20;
-    const MAX_CHARS_TOTAL: usize = 8_000;
+    let max_chars_total = max_chars.unwrap_or(32_000);
 
     let abs_dir: PathBuf = if target_dir.is_absolute() {
         target_dir.to_path_buf()
@@ -2351,7 +2412,7 @@ pub fn repo_map_with_filter(target_dir: &Path, search_filter: Option<&str>) -> R
             }
         }
 
-        if out.len() > MAX_CHARS_TOTAL {
+        if out.len() > max_chars_total {
             out.push_str("\n... (output truncated — token limit reached)\n");
             break;
         }

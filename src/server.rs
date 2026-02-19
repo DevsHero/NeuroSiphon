@@ -43,7 +43,7 @@ impl ServerState {
                             "properties": {
                                 "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
                                 "target_dir": { "type": "string", "description": "Directory to map (use '.' for whole repo)" },
-                                "search_filter": { "type": "string", "description": "Optional: case-insensitive substring filter (NOT regex). Supports OR via `foo|bar|baz`. Matches file path/filename; for small folders it may also match symbol names." },
+                                "search_filter": { "type": "string", "description": "Optional: case-insensitive substring filter (NOT regex). Supports OR via `foo|bar|baz`. Matches file path/filename; for small folders it may also match symbol names. (Tip: Avoid regex or plural words. Use short, core keywords like 'auth' or 'convert' to catch both 'AuthManager' and 'convert_request'.)" },
                                 "max_chars": { "type": "integer", "description": "Optional: max output chars (hard cap 8000). Lower to save tokens." },
                                 "ignore_gitignore": { "type": "boolean", "description": "Optional: when true, do not apply .gitignore/.ignore filters (default false). Useful when map_repo returns 0 files." }
                             },
@@ -58,7 +58,7 @@ impl ServerState {
                             "properties": {
                                 "repoPath": { "type": "string" },
                                 "path": { "type": "string", "description": "Path to the source file" },
-                                "symbol_name": { "type": "string", "description": "Exact name of the symbol (e.g. 'process_request')" },
+                                "symbol_name": { "type": "string", "description": "Exact name of the symbol (e.g. 'process_request'). (Tip: Avoid regex or plural words. Use short, core keywords like 'auth' or 'convert' to catch both 'AuthManager' and 'convert_request'.)" },
                                 "symbol_names": { "type": "array", "items": { "type": "string" }, "description": "Optional: fetch multiple symbols in one call (e.g. ['A','B','C']). If provided, `symbol_name` is ignored." }
                             },
                             "required": ["path"]
@@ -328,6 +328,35 @@ impl ServerState {
                 let max_chars = args.get("max_chars").and_then(|v| v.as_u64()).map(|n| n as usize);
                 let ignore_gitignore = args.get("ignore_gitignore").and_then(|v| v.as_bool()).unwrap_or(false);
                 let target_dir = resolve_path(&repo_root, target_str);
+
+                // Proactive guardrail: agents often hallucinate paths.
+                // If the target_dir doesn't exist, return a "did you mean?" error
+                // listing top-level repo entries to help recovery.
+                if !target_dir.exists() {
+                    let mut entries: Vec<String> = Vec::new();
+                    if let Ok(rd) = std::fs::read_dir(&repo_root) {
+                        for e in rd.flatten() {
+                            if let Some(name) = e.file_name().to_str() {
+                                entries.push(name.to_string());
+                            }
+                        }
+                    }
+                    entries.sort();
+                    let shown: Vec<String> = entries.into_iter().take(30).collect();
+                    return err(format!(
+                        "Error: Path '{}' does not exist in repo root '{}'.\n\
+Available top-level entries in this repo: [{}].\n\
+Please correct your target_dir (or pass repoPath explicitly).",
+                        target_str,
+                        repo_root.display(),
+                        shown
+                            .into_iter()
+                            .map(|s| format!("'{}'", s))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+
                 match repo_map_with_filter(&target_dir, search_filter, max_chars, ignore_gitignore) {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("repo_map failed: {e}")),

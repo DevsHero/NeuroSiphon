@@ -2554,6 +2554,16 @@ pub fn repo_map_with_filter(
 
     // ── 0-file guard (enterprise diagnostics) ───────────────────────────
     if kept_source_files == 0 {
+        let regex_note = if let Some(sf) = search_filter {
+            let looks_regex = sf.contains(".*") || sf.contains('^') || sf.contains('$') || sf.contains('[') || sf.contains(']');
+            if looks_regex {
+                "> ⚠️ **NOTE:** `search_filter` is a simple case-insensitive substring match (with `|` for OR). Regex characters (like `.*`) are treated as literal text. Consider simplifying your filter to plain keywords if you get no results.\n\n"
+            } else {
+                ""
+            }
+        } else {
+            ""
+        };
         let filter_hint = if !search_tokens.is_empty() {
             // Include filtered_out count if we have it; helps explain "0 files".
             format!(
@@ -2567,13 +2577,14 @@ pub fn repo_map_with_filter(
             String::new()
         };
         return Err(anyhow!(
-            "Error: 0 supported source files found in '{}'.\n\
+            "{}Error: 0 supported source files found in '{}'.\n\
 Diagnostics:\n\
 • Ensure the path is correct relative to the repo root.\n\
 • If files exist but are ignored, try again with `ignore_gitignore`: true.\n\
 • If the repo uses languages/extensions not yet supported, they will be skipped.\n\
 • If `search_filter` was set, it may have excluded everything — try without it.{}\n\
 Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
+            regex_note,
             target_dir.display()
             ,filter_hint
         ));
@@ -2620,6 +2631,15 @@ Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
             false
         }
     };
+
+    // Proactive guardrail: agents often try regex syntax in search_filter.
+    // We treat search_filter as substring-only, so regex metacharacters are literal.
+    if let Some(sf) = search_filter {
+        let looks_regex = sf.contains(".*") || sf.contains('^') || sf.contains('$') || sf.contains('[') || sf.contains(']');
+        if looks_regex {
+            push("> ⚠️ **NOTE:** `search_filter` is a simple case-insensitive substring match (with `|` for OR). Regex characters (like `.*`) are treated as literal text. Consider simplifying your filter to plain keywords if you get no results.\n\n");
+        }
+    }
 
     let dropped_total = dropped_by_gitignore_or_error
         .saturating_add(dropped_by_unsupported_lang)

@@ -2094,7 +2094,7 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
     use ignore::WalkBuilder;
     use std::collections::BTreeMap;
 
-    const MAX_EXPORTS_PER_FILE: usize = 20;
+    const MAX_SYMS_PER_FILE: usize = 20;
     const MAX_CHARS_TOTAL: usize = 8_000;
 
     let abs_dir: PathBuf = if target_dir.is_absolute() {
@@ -2140,30 +2140,22 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
             .to_string_lossy()
             .to_string();
 
-        let exports: Vec<(String, String)> = match analyze_file(path) {
-            Ok(file_syms) => {
-                let kind_map: HashMap<String, String> = file_syms
-                    .symbols
-                    .iter()
-                    .map(|s| (s.name.clone(), s.kind.clone()))
-                    .collect();
-                file_syms
-                    .exports
-                    .iter()
-                    .map(|name| {
-                        let kind = kind_map
-                            .get(name)
-                            .cloned()
-                            .unwrap_or_else(|| "symbol".to_string());
-                        (kind, name.clone())
-                    })
-                    .take(MAX_EXPORTS_PER_FILE)
-                    .collect()
-            }
-            Err(_) => vec![],
+        // Read source once; use extract_symbols_from_source (never fails on bad
+        // queries) then filter to "public" symbols with a language-aware heuristic.
+        let sym_pairs: Vec<(String, String)> = if let Ok(source_text) = std::fs::read_to_string(path) {
+            let syms = extract_symbols_from_source(path, &source_text);
+            let source_lines: Vec<&str> = source_text.lines().collect();
+
+            syms.into_iter()
+                .filter(|s| is_public_symbol(s, &source_lines, path))
+                .take(MAX_SYMS_PER_FILE)
+                .map(|s| (s.kind.clone(), s.name.clone()))
+                .collect()
+        } else {
+            vec![]
         };
 
-        by_dir.entry(dir_rel).or_default().push((filename, exports));
+        by_dir.entry(dir_rel).or_default().push((filename, sym_pairs));
     }
 
     let mut out = String::new();
@@ -2181,9 +2173,9 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
             out.push_str(&format!("\n{dir_rel}/\n"));
         }
 
-        for (filename, exports) in &files {
+        for (filename, syms) in &files {
             out.push_str(&format!("  {filename}\n"));
-            for (kind, name) in exports {
+            for (kind, name) in syms {
                 out.push_str(&format!("    [{:<8}] {name}\n", kind));
             }
         }
@@ -2197,9 +2189,97 @@ pub fn repo_map(target_dir: &Path) -> Result<String> {
     Ok(out)
 }
 
+/// Determine whether a symbol should be considered "public" for repo_map display.
+///
+/// Uses a fast source-line heuristic rather than AST predicates so it never fails.
+/// - **Rust**: declaration line contains `pub ` or `pub(`
+/// - **Python**: name does not start with `_`
+/// - **Go**: name starts with an ASCII upper-case letter
+/// - **TypeScript/JS**: show all top-level symbols (exports are shown by TS driver,
+///   but here we always include since we're doing a map, not a strict export list)
+/// - **Everything else**: include all symbols
+fn is_public_symbol(sym: &Symbol, source_lines: &[&str], path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    match ext.as_str() {
+        "rs" => {
+            // Check the declaration line for `pub ` or `pub(`
+            let line_idx = sym.line as usize;
+            let line = source_lines.get(line_idx).copied().unwrap_or("");
+            let trimmed = line.trim_start();
+            trimmed.starts_with("pub ") || trimmed.starts_with("pub(")
+        }
+        "py" => !sym.name.starts_with('_'),
+        "go" => sym
+            .name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false),
+        // TypeScript/JS/Java/C#/Dart/PHP — include everything
+        _ => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tool: neurosiphon_call_hierarchy — The Call Graph
 // ---------------------------------------------------------------------------
+
+/// Language-agnostic deny-list of common stdlib / runtime method names that
+/// produce noise in the outgoing call list without conveying domain intent.
+///
+/// Covers the most frequent offenders across Rust, Python, TypeScript, and Go.
+/// Names are exact (case-sensitive); entries are checked with `contains()`.
+static CALL_NOISE: &[&str] = &[
+    // Rust — core/std
+    "clone", "to_string", "to_owned", "into", "from", "default",
+    "trim", "trim_start", "trim_end", "to_lowercase", "to_uppercase",
+    "is_empty", "is_some", "is_none", "len", "push", "pop", "clear",
+    "iter", "iter_mut", "into_iter", "collect", "map", "filter",
+    "flat_map", "filter_map", "fold", "reduce", "any", "all", "find",
+    "next", "take", "skip", "enumerate", "zip", "chain", "rev",
+    "unwrap", "unwrap_or", "unwrap_or_else", "expect",
+    "ok", "err", "ok_or", "ok_or_else", "and_then", "or_else",
+    "as_ref", "as_mut", "as_str", "as_bytes", "as_slice", "as_deref",
+    "to_str", "to_path_buf", "to_string_lossy",
+    "contains", "starts_with", "ends_with", "split", "splitn",
+    "find", "rfind", "replace", "replacen",
+    "get", "set", "insert", "remove", "retain",
+    "join", "extend", "append", "truncate", "resize",
+    "new", "with_capacity", "capacity",
+    "path", "file_name", "parent", "extension", "exists", "is_file", "is_dir",
+    "read_to_string", "read_dir", "create_dir_all",
+    "send", "recv", "await", "spawn", "block_on",
+    "context", "with_context", "map_err",
+    "lock", "try_lock", "read", "write",
+    "format", "parse", "lines", "chars", "bytes",
+    "sort", "sort_by", "sort_by_key", "dedup",
+    "first", "last", "nth",
+    "min", "max", "min_by", "max_by", "min_by_key", "max_by_key",
+    "sum", "product", "count", "position",
+    "flush", "close",
+    // Python builtins / common methods
+    "append", "extend", "update", "keys", "values", "items",
+    "strip", "lstrip", "rstrip", "lower", "upper",
+    "encode", "decode", "format",
+    "isinstance", "hasattr", "getattr", "setattr",
+    "open", "print", "len", "range", "enumerate", "zip",
+    "list", "dict", "set", "tuple", "str", "int", "float", "bool",
+    "super", "type",
+    // TypeScript/JavaScript
+    "toString", "valueOf", "hasOwnProperty", "bind", "call", "apply",
+    "then", "catch", "finally",
+    "reduce", "forEach", "some", "every", "includes", "indexOf",
+    "slice", "splice", "concat", "flat", "flatMap",
+    "trim", "split", "replace", "match", "test",
+    "JSON",
+    // Go
+    "Error", "String", "Len",
+];
 
 /// Analyse the complete call hierarchy for a named symbol.
 ///
@@ -2363,9 +2443,16 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
         outgoing_calls.sort_by_key(|(_, line, _)| *line);
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (callee, line, file) in &outgoing_calls {
+            // Skip common stdlib / language-runtime noise that produces no signal.
+            if CALL_NOISE.contains(&callee.as_str()) {
+                continue;
+            }
             if seen.insert(callee.clone()) {
                 out.push_str(&format!("- `{callee}` — {file}:L{line}\n"));
             }
+        }
+        if seen.is_empty() {
+            out.push_str("- *(stdlib/built-in methods only — no domain calls detected)*\n");
         }
     }
     out.push('\n');
@@ -2391,16 +2478,22 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
     Ok(out)
 }
 
-/// Collect all call sites of `symbol_name` by walking the AST for
-/// `call_expression` / `method_call_expression` nodes whose callable resolves
-/// to `symbol_name` as the trailing identifier component.
+/// Collect all call sites of `symbol_name` by walking the AST for call nodes
+/// whose callable resolves to `symbol_name` as the trailing identifier.
+///
+/// Handles:
+/// - `call_expression` — Rust / TypeScript / JavaScript
+/// - `method_call_expression` — Rust
+/// - `call` — Python (direct call and attribute call)
 fn collect_call_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec<u32>) {
     let kind = node.kind();
     if kind.contains("comment") || kind.contains("string") || kind.contains("template") {
         return;
     }
 
-    if matches!(kind, "call_expression" | "method_call_expression") {
+    if matches!(kind, "call_expression" | "method_call_expression" | "call") {
+        // Field "function" covers Rust call_expression, TypeScript call_expression,
+        // and Python call.  "method" covers Rust method_call_expression.
         let target_node = node
             .child_by_field_name("function")
             .or_else(|| node.child_by_field_name("method"))
@@ -2409,6 +2502,7 @@ fn collect_call_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec
         if let Some(target) = target_node {
             let text =
                 std::str::from_utf8(&source[target.start_byte()..target.end_byte()]).unwrap_or("");
+            // Strip module/attribute prefix: `mod.func` / `self.func` / `Foo::bar`
             let last = text
                 .rsplit(|c: char| c == '.' || c == ':')
                 .next()
@@ -2428,13 +2522,16 @@ fn collect_call_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec
 
 /// Extract all outgoing call targets from an AST subtree (typically a function
 /// body). Returns `(callee_name, 0-indexed_line_in_body)` pairs.
+///
+/// Handles Rust `call_expression` / `method_call_expression`, TypeScript
+/// `call_expression`, and Python `call`.
 fn extract_call_targets_from_body(node: Node, source: &[u8], out: &mut Vec<(String, u32)>) {
     let kind = node.kind();
     if kind.contains("comment") || kind.contains("string") || kind.contains("template") {
         return;
     }
 
-    if matches!(kind, "call_expression" | "method_call_expression") {
+    if matches!(kind, "call_expression" | "method_call_expression" | "call") {
         let target_node = node
             .child_by_field_name("function")
             .or_else(|| node.child_by_field_name("method"))
@@ -2443,6 +2540,7 @@ fn extract_call_targets_from_body(node: Node, source: &[u8], out: &mut Vec<(Stri
         if let Some(target) = target_node {
             let text =
                 std::str::from_utf8(&source[target.start_byte()..target.end_byte()]).unwrap_or("");
+            // Extract the trailing identifier (strips module / attribute prefix).
             let last = text
                 .rsplit(|c: char| c == '.' || c == ':')
                 .next()

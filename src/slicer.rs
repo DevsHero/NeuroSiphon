@@ -80,7 +80,8 @@ pub fn slice_paths_to_xml(
             Ok(b) => b,
             Err(_) => continue,
         };
-        let content_full = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
+        let content_full = String::from_utf8(bytes)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
         let rel = e.rel_path.to_string_lossy().replace('\\', "/");
 
         let content = if cfg.skeleton_mode || skeleton_only {
@@ -143,7 +144,12 @@ fn estimate_xml_repository_map_overhead_bytes() -> u64 {
 
 fn truncation_header_for_path(rel_path: &str) -> &'static str {
     let p = rel_path.to_lowercase();
-    if p.ends_with(".md") || p.ends_with(".txt") || p.ends_with(".toml") || p.ends_with(".yaml") || p.ends_with(".yml") {
+    if p.ends_with(".md")
+        || p.ends_with(".txt")
+        || p.ends_with(".toml")
+        || p.ends_with(".yaml")
+        || p.ends_with(".yml")
+    {
         "# TRUNCATED\n"
     } else {
         "/* TRUNCATED */\n"
@@ -299,7 +305,11 @@ fn importance_score(rel_path: &str) -> i64 {
     let src_depth_bonus = p.matches("/src/").count() as i64;
     score += src_depth_bonus * 30;
 
-    if p.contains("/core/") || p.contains("/lib/") || p.contains("/common/") || p.contains("/shared/") {
+    if p.contains("/core/")
+        || p.contains("/lib/")
+        || p.contains("/common/")
+        || p.contains("/shared/")
+    {
         score += 25;
     }
 
@@ -312,12 +322,20 @@ fn importance_score(rel_path: &str) -> i64 {
     if file == "readme.md" || file.ends_with(".md") {
         score += 10;
     }
-    if file.ends_with(".toml") || file.ends_with(".yaml") || file.ends_with(".yml") || file.ends_with(".json") {
+    if file.ends_with(".toml")
+        || file.ends_with(".yaml")
+        || file.ends_with(".yml")
+        || file.ends_with(".json")
+    {
         score += 5;
     }
 
     // ── Deprioritise deep data / generated dirs ───────────────────────────
-    if p.contains("/dist/") || p.contains("/target/") || p.contains("/generated/") || p.contains("/migrations/") {
+    if p.contains("/dist/")
+        || p.contains("/target/")
+        || p.contains("/generated/")
+        || p.contains("/migrations/")
+    {
         score -= 30;
     }
 
@@ -453,7 +471,9 @@ fn build_xml_from_entries(
             .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).to_string());
         let rel = e.rel_path.to_string_lossy().to_string();
 
-        let is_focus_full = focus_full_rel.as_ref().is_some_and(|f| f == &rel.replace('\\', "/"));
+        let is_focus_full = focus_full_rel
+            .as_ref()
+            .is_some_and(|f| f == &rel.replace('\\', "/"));
         let skeleton_mode = cfg.skeleton_mode || skeleton_only;
         let content = if is_focus_full {
             content_full
@@ -539,12 +559,18 @@ pub fn slice_to_xml(
         a_score += *indegree.get(&a_rel).unwrap_or(&0) as i64 * 10;
         b_score += *indegree.get(&b_rel).unwrap_or(&0) as i64 * 10;
 
-        b_score
-            .cmp(&a_score)
-            .then_with(|| a_rel.cmp(&b_rel))
+        b_score.cmp(&a_score).then_with(|| a_rel.cmp(&b_rel))
     });
 
-    build_xml_from_entries(entries, repo_root, target, budget_tokens, cfg, focus_full_rel, skeleton_only)
+    build_xml_from_entries(
+        entries,
+        repo_root,
+        target,
+        budget_tokens,
+        cfg,
+        focus_full_rel,
+        skeleton_only,
+    )
 }
 
 /// Estimate whether this is a "large workspace" by counting top-level manifests
@@ -564,7 +590,9 @@ fn is_large_workspace(root: &Path) -> bool {
     // A package.json with many workspaces entries.
     let pkg_json = root.join("package.json");
     if pkg_json.exists() {
-        if let Ok(v) = std::fs::read_to_string(&pkg_json).map(|t| serde_json::from_str::<serde_json::Value>(&t)) {
+        if let Ok(v) = std::fs::read_to_string(&pkg_json)
+            .map(|t| serde_json::from_str::<serde_json::Value>(&t))
+        {
             if let Ok(v) = v {
                 let has_workspaces = v.get("workspaces").is_some();
                 if has_workspaces {
@@ -598,7 +626,10 @@ fn build_scan_options(repo_root: &Path, target: &Path, cfg: &Config) -> ScanOpti
         repo_root.join(target)
     };
 
-    let target_name = target_abs.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let target_name = target_abs
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
     if target_name != "target" {
         exclude_dirs.push("target".into());
     }
@@ -619,7 +650,12 @@ fn build_scan_options(repo_root: &Path, target: &Path, cfg: &Config) -> ScanOpti
 ///
 /// This guarantees that *every* service gets at least a skeleton of its entry points
 /// rather than deeper services being completely crowded out by top-level files.
-pub fn slice_to_xml_huge(repo_root: &Path, budget_tokens: usize, cfg: &Config, skeleton_only: bool) -> Result<(String, SliceMeta)> {
+pub fn slice_to_xml_huge(
+    repo_root: &Path,
+    budget_tokens: usize,
+    cfg: &Config,
+    skeleton_only: bool,
+) -> Result<(String, SliceMeta)> {
     let discovery_opts = WorkspaceDiscoveryOptions {
         max_depth: cfg.huge_codebase.member_scan_depth,
         include_patterns: cfg.huge_codebase.include_members.clone(),
@@ -781,7 +817,10 @@ pub fn slice_to_xml_huge(repo_root: &Path, budget_tokens: usize, cfg: &Config, s
 
             let overhead = estimate_xml_file_overhead_bytes(&rel);
             let added = overhead + content.len() as u64;
-            let new_member_est = estimate_tokens_from_bytes(member_bytes + added, cfg.token_estimator.chars_per_token);
+            let new_member_est = estimate_tokens_from_bytes(
+                member_bytes + added,
+                cfg.token_estimator.chars_per_token,
+            );
             if new_member_est > per_member_budget {
                 continue;
             }

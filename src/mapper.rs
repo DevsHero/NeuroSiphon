@@ -55,13 +55,18 @@ pub struct ModuleGraph {
 }
 
 fn is_known_manifest_file(name: &str) -> bool {
-    matches!(name, "package.json" | "Cargo.toml" | "pubspec.yaml" | "go.mod")
+    matches!(
+        name,
+        "package.json" | "Cargo.toml" | "pubspec.yaml" | "go.mod"
+    )
 }
 
 fn read_package_json_name(package_json: &Path) -> Option<String> {
     let text = std::fs::read_to_string(package_json).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    v.get("name").and_then(|n| n.as_str()).map(|s| s.to_string())
+    v.get("name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
 }
 
 fn read_pubspec_name(pubspec_yaml: &Path) -> Option<String> {
@@ -135,7 +140,7 @@ fn read_cargo_dependencies(cargo_toml: &Path) -> Vec<(String, String)> {
     };
 
     let mut result = Vec::new();
-    
+
     // Check both [dependencies] and [dev-dependencies]
     for section in &["dependencies", "dev-dependencies"] {
         if let Some(deps) = value.get(section).and_then(|d| d.as_table()) {
@@ -151,7 +156,7 @@ fn read_cargo_dependencies(cargo_toml: &Path) -> Vec<(String, String)> {
             }
         }
     }
-    
+
     result
 }
 
@@ -225,7 +230,11 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
             PathBuf::from(normalize_slash(m.as_ref()))
         };
 
-        let abs = if m_norm.is_absolute() { m_norm.clone() } else { repo_root.join(&m_norm) };
+        let abs = if m_norm.is_absolute() {
+            m_norm.clone()
+        } else {
+            repo_root.join(&m_norm)
+        };
         let abs = abs.canonicalize().unwrap_or(abs);
 
         let name = abs.file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -300,7 +309,10 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
 
     specs.sort_by(|a, b| a.id.cmp(&b.id));
     if specs.is_empty() {
-        return Ok(ModuleGraph { nodes: vec![], edges: vec![] });
+        return Ok(ModuleGraph {
+            nodes: vec![],
+            edges: vec![],
+        });
     }
 
     // 2) Build node list + metadata.
@@ -429,7 +441,7 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
             // Resolve the relative path from this module's directory
             let dep_abs = s.dir_abs.join(&dep_path);
             let dep_abs = dep_abs.canonicalize().unwrap_or(dep_abs);
-            
+
             // Convert to repo-relative path
             let dep_rel = match rel_str(repo_root, &dep_abs) {
                 Some(r) => r,
@@ -440,7 +452,9 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
             if let Some(dst_mod_id) = path_to_module.get(&dep_rel) {
                 if dst_mod_id != &s.id {
                     // Add weight 5 for explicit dependency (higher than single import)
-                    *weights.entry((s.id.clone(), dst_mod_id.clone())).or_insert(0) += 5;
+                    *weights
+                        .entry((s.id.clone(), dst_mod_id.clone()))
+                        .or_insert(0) += 5;
                 }
             }
         }
@@ -448,18 +462,25 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
 
     // 4) Resolve imports into edges between selected modules.
 
-    let module_ids: Vec<(PathBuf, String)> = specs.iter().map(|s| (s.dir_abs.clone(), s.id.clone())).collect();
+    let module_ids: Vec<(PathBuf, String)> = specs
+        .iter()
+        .map(|s| (s.dir_abs.clone(), s.id.clone()))
+        .collect();
 
     for (dir, src_mod_id) in &module_ids {
         let a = acc_by_dir.get(dir).cloned().unwrap_or_default();
-        
+
         for file_abs in &a.files {
             let analyzed = match analyze_file(file_abs) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
 
-            let ext = file_abs.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let ext = file_abs
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
             let is_rust = ext == "rs";
 
             for imp in analyzed.imports {
@@ -480,12 +501,18 @@ pub fn build_map_from_manifests(repo_root: &Path, manifests: &[PathBuf]) -> Resu
                 }
 
                 // TS/JS: resolve relative import to a file, then map to a selected module by prefix.
-                let Some(dst_file_abs) = resolve_ts_import(repo_root, file_abs, &imp) else { continue };
+                let Some(dst_file_abs) = resolve_ts_import(repo_root, file_abs, &imp) else {
+                    continue;
+                };
                 let dst_file_abs = dst_file_abs.canonicalize().unwrap_or(dst_file_abs);
 
                 // Compare using repo-relative forward-slash paths to avoid OS separator mismatches.
-                let Some(dst_rel) = rel_str(repo_root, &dst_file_abs) else { continue };
-                let Some(dst_mod_id) = module_id_for_rel_path(&dst_rel, &module_roots_rel) else { continue };
+                let Some(dst_rel) = rel_str(repo_root, &dst_file_abs) else {
+                    continue;
+                };
+                let Some(dst_mod_id) = module_id_for_rel_path(&dst_rel, &module_roots_rel) else {
+                    continue;
+                };
                 if dst_mod_id != *src_mod_id {
                     *weights.entry((src_mod_id.clone(), dst_mod_id)).or_insert(0) += 1;
                 }
@@ -564,7 +591,9 @@ fn resolve_ts_import(repo_root: &Path, from_file_abs: &Path, imp: &str) -> Optio
 
     let base_dir = from_file_abs.parent()?;
 
-    let exts = ["ts", "tsx", "js", "jsx", "json", "md", "toml", "css", "html"];
+    let exts = [
+        "ts", "tsx", "js", "jsx", "json", "md", "toml", "css", "html",
+    ];
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     candidates.push(base_dir.join(imp));
@@ -588,7 +617,11 @@ fn resolve_ts_import(repo_root: &Path, from_file_abs: &Path, imp: &str) -> Optio
     None
 }
 
-fn find_owner_module(mut dir: &Path, stop_at: &Path, module_roots: &BTreeSet<PathBuf>) -> Option<PathBuf> {
+fn find_owner_module(
+    mut dir: &Path,
+    stop_at: &Path,
+    module_roots: &BTreeSet<PathBuf>,
+) -> Option<PathBuf> {
     loop {
         if module_roots.contains(dir) {
             return Some(dir.to_path_buf());
@@ -643,7 +676,9 @@ pub fn build_module_graph(repo_root: &Path, root: &Path) -> Result<ModuleGraph> 
             continue;
         }
         let p = ent.path();
-        let Some(name) = p.file_name().and_then(|s| s.to_str()) else { continue };
+        let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if !is_module_marker_file(name) {
             continue;
         }
@@ -693,7 +728,8 @@ pub fn build_module_graph(repo_root: &Path, root: &Path) -> Result<ModuleGraph> 
             continue;
         }
         let Some(parent) = p.parent() else { continue };
-        let owner = find_owner_module(parent, &root_abs, &module_roots).unwrap_or_else(|| root_abs.clone());
+        let owner =
+            find_owner_module(parent, &root_abs, &module_roots).unwrap_or_else(|| root_abs.clone());
         let acc = modules.entry(owner).or_default();
         let sz = ent.metadata().map(|m| m.len()).unwrap_or(0);
         acc.bytes += sz;
@@ -706,7 +742,10 @@ pub fn build_module_graph(repo_root: &Path, root: &Path) -> Result<ModuleGraph> 
     let mut module_id_by_abs: BTreeMap<PathBuf, String> = BTreeMap::new();
 
     for (abs, acc) in &modules {
-        let rel = abs.strip_prefix(repo_root).ok().map(|r| r.to_string_lossy().replace('\\', "/"));
+        let rel = abs
+            .strip_prefix(repo_root)
+            .ok()
+            .map(|r| r.to_string_lossy().replace('\\', "/"));
         let id = normalize_module_id(rel.as_deref().unwrap_or("."));
         module_id_by_abs.insert(abs.clone(), id.clone());
         nodes.push(ModuleNode {
@@ -725,7 +764,9 @@ pub fn build_module_graph(repo_root: &Path, root: &Path) -> Result<ModuleGraph> 
     let mut weights: BTreeMap<(String, String), u64> = BTreeMap::new();
 
     for (module_abs, acc) in &modules {
-        let Some(src_mod_id) = module_id_by_abs.get(module_abs).cloned() else { continue };
+        let Some(src_mod_id) = module_id_by_abs.get(module_abs).cloned() else {
+            continue;
+        };
         for file_abs in &acc.files {
             let analyzed = match analyze_file(file_abs) {
                 Ok(v) => v,
@@ -733,10 +774,17 @@ pub fn build_module_graph(repo_root: &Path, root: &Path) -> Result<ModuleGraph> 
             };
 
             for imp in analyzed.imports {
-                let Some(dst_file_abs) = resolve_ts_import(repo_root, file_abs, &imp) else { continue };
-                let Some(dst_parent) = dst_file_abs.parent() else { continue };
-                let dst_owner = find_owner_module(dst_parent, &root_abs, &module_roots).unwrap_or_else(|| root_abs.clone());
-                let Some(dst_mod_id) = module_id_by_abs.get(&dst_owner).cloned() else { continue };
+                let Some(dst_file_abs) = resolve_ts_import(repo_root, file_abs, &imp) else {
+                    continue;
+                };
+                let Some(dst_parent) = dst_file_abs.parent() else {
+                    continue;
+                };
+                let dst_owner = find_owner_module(dst_parent, &root_abs, &module_roots)
+                    .unwrap_or_else(|| root_abs.clone());
+                let Some(dst_mod_id) = module_id_by_abs.get(&dst_owner).cloned() else {
+                    continue;
+                };
                 if dst_mod_id == src_mod_id {
                     continue;
                 }
@@ -766,9 +814,7 @@ fn normalize_slash(p: &Path) -> String {
 }
 
 fn rel_str(repo_root: &Path, p: &Path) -> Option<String> {
-    p.strip_prefix(repo_root)
-        .ok()
-    .map(normalize_slash)
+    p.strip_prefix(repo_root).ok().map(normalize_slash)
 }
 
 fn normalize_module_id(rel: &str) -> String {
@@ -851,7 +897,10 @@ fn is_allowed_source_ext(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
         return false;
     };
-    matches!(ext, "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "dart")
+    matches!(
+        ext,
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "dart"
+    )
 }
 
 pub fn build_repo_map(repo_root: &Path) -> Result<RepoMap> {
@@ -872,9 +921,7 @@ pub fn build_repo_map_scoped(repo_root: &Path, scope: &Path) -> Result<RepoMap> 
         repo_root.join(scope)
     };
 
-    let scope_abs = scope_abs
-        .canonicalize()
-        .unwrap_or(scope_abs);
+    let scope_abs = scope_abs.canonicalize().unwrap_or(scope_abs);
 
     if !scope_abs.exists() {
         anyhow::bail!("Scope path not found: {}", scope_abs.display());
@@ -884,7 +931,8 @@ pub fn build_repo_map_scoped(repo_root: &Path, scope: &Path) -> Result<RepoMap> 
     }
 
     // Parent id is the repo-relative directory path.
-    let parent_rel = rel_str(repo_root, &scope_abs).unwrap_or_else(|| scope.to_string_lossy().to_string());
+    let parent_rel =
+        rel_str(repo_root, &scope_abs).unwrap_or_else(|| scope.to_string_lossy().to_string());
     let parent_id = normalize_module_id(&parent_rel);
 
     // Include the container node itself so the frontend can treat it as a stable "card".

@@ -3,10 +3,12 @@ use clap::{Parser, Subcommand};
 use cortexast::config::load_config;
 use cortexast::inspector::analyze_file;
 use cortexast::inspector::render_skeleton;
-use cortexast::mapper::{build_map_from_manifests, build_module_graph, build_repo_map, build_repo_map_scoped};
+use cortexast::mapper::{
+    build_map_from_manifests, build_module_graph, build_repo_map, build_repo_map_scoped,
+};
+use cortexast::scanner::{scan_workspace, ScanOptions};
 use cortexast::server::run_stdio_server;
 use cortexast::slicer::{slice_paths_to_xml, slice_to_xml};
-use cortexast::scanner::{scan_workspace, ScanOptions};
 use cortexast::vector_store::CodebaseIndex;
 use cortexast::workspace::{discover_workspace_members, WorkspaceDiscoveryOptions};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -46,7 +48,6 @@ struct Cli {
     /// Target module/directory path (relative to repo root)
     #[arg(long, short = 't')]
     target: Option<PathBuf>,
-
 
     /// Vector search query; when present, runs local hybrid search and slices only the most relevant files.
     #[arg(long, value_name = "TEXT")]
@@ -129,7 +130,11 @@ fn main() -> Result<()> {
     }
 
     if let Some(p) = cli.inspect {
-        let abs = if p.is_absolute() { p } else { repo_root.join(&p) };
+        let abs = if p.is_absolute() {
+            p
+        } else {
+            repo_root.join(&p)
+        };
         let mut out = analyze_file(&abs)?;
         // Prefer repo-relative file path in JSON output.
         if let Ok(rel) = abs.strip_prefix(&repo_root) {
@@ -142,7 +147,11 @@ fn main() -> Result<()> {
     }
 
     if let Some(p) = cli.skeleton {
-        let abs = if p.is_absolute() { p } else { repo_root.join(&p) };
+        let abs = if p.is_absolute() {
+            p
+        } else {
+            repo_root.join(&p)
+        };
         let skel = render_skeleton(&abs)?;
         print!("{}", skel);
         return Ok(());
@@ -237,9 +246,8 @@ fn main() -> Result<()> {
         refresh_spinner.set_message("checking index freshness...");
         match index.refresh(&opts) {
             Ok((added, updated, deleted)) if added + updated + deleted > 0 => {
-                refresh_spinner.finish_with_message(format!(
-                    "index updated: +{added} ~{updated} -{deleted}"
-                ));
+                refresh_spinner
+                    .finish_with_message(format!("index updated: +{added} ~{updated} -{deleted}"));
             }
             Ok(_) => {
                 refresh_spinner.finish_with_message("index fresh (no changes)");
@@ -252,13 +260,16 @@ fn main() -> Result<()> {
         // Run async search on a small runtime.
         let rt = tokio::runtime::Runtime::new()?;
         let q_owned = q.clone();
-        let limit = cli
-            .query_limit
-            .unwrap_or_else(|| auto_query_limit(cli.budget_tokens, entries.len(), cfg.vector_search.default_query_limit));
-
-        let rel_paths: Vec<String> = rt.block_on(async move {
-            (index.search(&q_owned, limit).await).unwrap_or_default()
+        let limit = cli.query_limit.unwrap_or_else(|| {
+            auto_query_limit(
+                cli.budget_tokens,
+                entries.len(),
+                cfg.vector_search.default_query_limit,
+            )
         });
+
+        let rel_paths: Vec<String> =
+            rt.block_on(async move { (index.search(&q_owned, limit).await).unwrap_or_default() });
 
         let (xml, _meta) = if rel_paths.is_empty() {
             slice_to_xml(&repo_root, &index_target, cli.budget_tokens, &cfg, false)?
@@ -267,7 +278,10 @@ fn main() -> Result<()> {
         };
         (xml, format!("query:{}", q))
     } else {
-        let target = cli.target.clone().context("Missing --target (or provide --query)")?;
+        let target = cli
+            .target
+            .clone()
+            .context("Missing --target (or provide --query)")?;
         let (xml, _meta) = slice_to_xml(&repo_root, &target, cli.budget_tokens, &cfg, false)?;
         (xml, target.to_string_lossy().to_string())
     };
@@ -295,7 +309,11 @@ fn main() -> Result<()> {
         print!("{}", xml);
     } else {
         // Default to printing JSON meta later; for now just confirm success.
-        eprintln!("Wrote {} bytes to {}", xml.len(), out_dir.join("active_context.xml").display());
+        eprintln!(
+            "Wrote {} bytes to {}",
+            xml.len(),
+            out_dir.join("active_context.xml").display()
+        );
     }
 
     Ok(())

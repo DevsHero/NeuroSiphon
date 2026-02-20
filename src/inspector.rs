@@ -41,11 +41,23 @@ pub trait LanguageDriver: Send + Sync {
     fn handles_path(&self, path: &Path) -> bool;
     fn language_for_path(&self, path: &Path) -> Language;
 
-    fn find_imports(&self, _path: &Path, _source: &[u8], _root: Node, _language: Language) -> Result<Vec<String>> {
+    fn find_imports(
+        &self,
+        _path: &Path,
+        _source: &[u8],
+        _root: Node,
+        _language: Language,
+    ) -> Result<Vec<String>> {
         Ok(vec![])
     }
 
-    fn find_exports(&self, _path: &Path, _source: &[u8], _root: Node, _language: Language) -> Result<Vec<String>> {
+    fn find_exports(
+        &self,
+        _path: &Path,
+        _source: &[u8],
+        _root: Node,
+        _language: Language,
+    ) -> Result<Vec<String>> {
         Ok(vec![])
     }
 
@@ -65,7 +77,13 @@ pub trait LanguageDriver: Send + Sync {
         Ok(vec![])
     }
 
-    fn extract_skeleton(&self, path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>>;
+    fn extract_skeleton(
+        &self,
+        path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>>;
 }
 
 fn apply_replacements(source_text: &str, mut reps: Vec<(usize, usize, String)>) -> String {
@@ -212,7 +230,9 @@ fn strip_comment_only_lines_and_blocks(text: &str) -> String {
         // Remove block comments that start at the beginning of a line (common for license headers).
         if trimmed.starts_with("/*") {
             // Preserve our own skeleton placeholders and truncation markers.
-            let keep = trimmed.contains("/* ... */") || trimmed.contains("TRUNCATED") || contains_todo_fixme(trimmed);
+            let keep = trimmed.contains("/* ... */")
+                || trimmed.contains("TRUNCATED")
+                || contains_todo_fixme(trimmed);
             if keep {
                 out_lines.push(line.to_string());
                 i += 1;
@@ -309,7 +329,11 @@ fn nuke_all_imports(text: &str) -> String {
         }
 
         // Detect individual import/use/from/using lines.
-        if trimmed.starts_with("use ") || trimmed.starts_with("import ") || trimmed.starts_with("from ") || trimmed.starts_with("using ") {
+        if trimmed.starts_with("use ")
+            || trimmed.starts_with("import ")
+            || trimmed.starts_with("from ")
+            || trimmed.starts_with("using ")
+        {
             if first_import_keyword.is_none() {
                 if trimmed.starts_with("use ") {
                     first_import_keyword = Some("use");
@@ -332,7 +356,9 @@ fn nuke_all_imports(text: &str) -> String {
     if import_count > 0 {
         let keyword = first_import_keyword.unwrap_or("import");
         let hint = format!("// ... ({} {}s)", import_count, keyword);
-        if preserved_lines.is_empty() || (preserved_lines.len() == 1 && preserved_lines[0].starts_with("#!")) {
+        if preserved_lines.is_empty()
+            || (preserved_lines.len() == 1 && preserved_lines[0].starts_with("#!"))
+        {
             preserved_lines.push(hint);
         } else {
             preserved_lines.insert(0, hint);
@@ -437,7 +463,9 @@ pub fn render_skeleton(path: &Path) -> Result<String> {
     let abs: PathBuf = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get current dir")?.join(path)
+        std::env::current_dir()
+            .context("Failed to get current dir")?
+            .join(path)
     };
 
     let driver = language_config()
@@ -446,8 +474,7 @@ pub fn render_skeleton(path: &Path) -> Result<String> {
     let language = driver.language_for_path(&abs);
 
     // Binary-safe read: detect null bytes before attempting UTF-8 decode.
-    let raw = std::fs::read(&abs)
-        .with_context(|| format!("Failed to read {}", abs.display()))?;
+    let raw = std::fs::read(&abs).with_context(|| format!("Failed to read {}", abs.display()))?;
     if raw.contains(&0u8) {
         return Ok("/* BINARY_FILE — skipped */\n".to_string());
     }
@@ -479,7 +506,9 @@ pub fn render_skeleton_from_source(path: &Path, source_text: &str) -> Result<Str
     let abs: PathBuf = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get current dir")?.join(path)
+        std::env::current_dir()
+            .context("Failed to get current dir")?
+            .join(path)
     };
 
     // Safety net.
@@ -533,7 +562,9 @@ pub fn try_render_skeleton_from_source(path: &Path, source_text: &str) -> Result
     let abs: PathBuf = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get current dir")?.join(path)
+        std::env::current_dir()
+            .context("Failed to get current dir")?
+            .join(path)
     };
 
     let Some(driver) = language_config().driver_for_path(&abs) else {
@@ -542,7 +573,19 @@ pub fn try_render_skeleton_from_source(path: &Path, source_text: &str) -> Result
         let ext = path_ext_lower(&abs);
         if matches!(
             ext.as_str(),
-            "" | "md" | "txt" | "toml" | "json" | "yaml" | "yml" | "scm" | "lock" | "csv" | "tsv" | "xml" | "html" | "css"
+            "" | "md"
+                | "txt"
+                | "toml"
+                | "json"
+                | "yaml"
+                | "yml"
+                | "scm"
+                | "lock"
+                | "csv"
+                | "tsv"
+                | "xml"
+                | "html"
+                | "css"
         ) {
             return Ok(None);
         }
@@ -586,7 +629,10 @@ impl LanguageConfig {
         }
 
         // Fallback for special filename-based handling (e.g. `.d.ts`).
-        self.drivers.iter().find(|d| d.handles_path(path)).map(|d| d.as_ref())
+        self.drivers
+            .iter()
+            .find(|d| d.handles_path(path))
+            .map(|d| d.as_ref())
     }
 }
 
@@ -668,11 +714,29 @@ impl LanguageDriver for RustDriver {
         tree_sitter_rust::language()
     }
 
-    fn find_imports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
-        run_query_strings(source, root, &language, r#"(use_declaration argument: (_) @path)"#, "path")
+    fn find_imports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
+        run_query_strings(
+            source,
+            root,
+            &language,
+            r#"(use_declaration argument: (_) @path)"#,
+            "path",
+        )
     }
 
-    fn find_exports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
+    fn find_exports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
         let mut exports: Vec<String> = Vec::new();
         exports.extend(run_query_strings(
             source,
@@ -734,14 +798,26 @@ impl LanguageDriver for RustDriver {
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
         // Only function bodies. We do NOT prune impl/trait blocks; their methods will be pruned.
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/rust_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/rust_prune.scm"),
+            "body",
+        )?;
         Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
             .collect())
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
         symbols.extend(run_query(
             source,
@@ -817,7 +893,10 @@ impl LanguageDriver for TypeScriptDriver {
 
     fn handles_path(&self, path: &Path) -> bool {
         let ext = path_ext_lower(path);
-        if matches!(ext.as_str(), "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs") {
+        if matches!(
+            ext.as_str(),
+            "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs"
+        ) {
             return true;
         }
         file_name_lower(path).ends_with(".d.ts")
@@ -833,12 +912,33 @@ impl LanguageDriver for TypeScriptDriver {
         }
     }
 
-    fn find_imports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
-        let import_srcs = run_query_strings(source, root, &language, r#"(import_statement source: (string) @src)"#, "src")?;
-        Ok(import_srcs.into_iter().map(|s| strip_string_quotes(&s)).collect())
+    fn find_imports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
+        let import_srcs = run_query_strings(
+            source,
+            root,
+            &language,
+            r#"(import_statement source: (string) @src)"#,
+            "src",
+        )?;
+        Ok(import_srcs
+            .into_iter()
+            .map(|s| strip_string_quotes(&s))
+            .collect())
     }
 
-    fn find_exports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
+    fn find_exports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
         let mut exports: Vec<String> = Vec::new();
 
         exports.extend(run_query_strings(
@@ -876,7 +976,13 @@ impl LanguageDriver for TypeScriptDriver {
         Ok(exports)
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
 
         symbols.extend(run_query(
@@ -954,7 +1060,13 @@ impl LanguageDriver for TypeScriptDriver {
         // Focus on statement blocks for functions/methods. Skip arbitrary blocks.
         let mut out: Vec<(usize, usize, String)> = Vec::new();
 
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/ts_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/ts_prune.scm"),
+            "body",
+        )?;
         for (s, e) in bodies {
             out.push((s, e, "{ /* ... */ }".to_string()));
         }
@@ -980,7 +1092,13 @@ impl LanguageDriver for PythonDriver {
         tree_sitter_python::language()
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
         symbols.extend(run_query(
             source,
@@ -1010,7 +1128,13 @@ impl LanguageDriver for PythonDriver {
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
         // Replace function/class suite blocks with an indented "..." line.
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/py_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/py_prune.scm"),
+            "body",
+        )?;
         let mut out: Vec<(usize, usize, String)> = Vec::new();
         for (s, e) in bodies {
             let indent = line_indent_at_byte(source_text, s);
@@ -1021,7 +1145,10 @@ impl LanguageDriver for PythonDriver {
 }
 
 fn is_go_exported_ident(name: &str) -> bool {
-    name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+    name.chars()
+        .next()
+        .map(|c| c.is_ascii_uppercase())
+        .unwrap_or(false)
 }
 
 #[cfg(feature = "lang-go")]
@@ -1045,7 +1172,13 @@ impl LanguageDriver for GoDriver {
         tree_sitter_go::language()
     }
 
-    fn find_imports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
+    fn find_imports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
         let mut out: Vec<String> = Vec::new();
         out.extend(run_query_strings(
             source,
@@ -1064,7 +1197,13 @@ impl LanguageDriver for GoDriver {
         Ok(out.into_iter().map(|s| strip_string_quotes(&s)).collect())
     }
 
-    fn find_exports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
+    fn find_exports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
         let mut exports: Vec<String> = Vec::new();
 
         exports.extend(run_query_strings(
@@ -1093,7 +1232,13 @@ impl LanguageDriver for GoDriver {
         Ok(exports)
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
         symbols.extend(run_query(
             source,
@@ -1120,14 +1265,17 @@ impl LanguageDriver for GoDriver {
             false,
         )?);
         // Package-level const declarations (e.g. `const MaxRetries = 5`).
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(const_spec name: (identifier) @name) @def"#,
-            "const",
-            false,
-        ).unwrap_or_default());
+        symbols.extend(
+            run_query(
+                source,
+                root,
+                &language,
+                r#"(const_spec name: (identifier) @name) @def"#,
+                "const",
+                false,
+            )
+            .unwrap_or_default(),
+        );
         Ok(symbols)
     }
 
@@ -1139,7 +1287,14 @@ impl LanguageDriver for GoDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/go_prune.scm"), "body")?;        Ok(bodies
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/go_prune.scm"),
+            "body",
+        )?;
+        Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
             .collect())
@@ -1167,7 +1322,13 @@ impl LanguageDriver for DartDriver {
         tree_sitter_dart::language()
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
 
         symbols.extend(run_query(
@@ -1276,7 +1437,13 @@ impl LanguageDriver for DartDriver {
     ) -> Result<Vec<(usize, usize, String)>> {
         // Dart function/method bodies are represented as `function_body` nodes.
         // We only prune block-bodied functions (skip `=> expr;` forms for now).
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/dart_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/dart_prune.scm"),
+            "body",
+        )?;
         Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
@@ -1305,7 +1472,13 @@ impl LanguageDriver for JavaDriver {
         tree_sitter_java::language()
     }
 
-    fn find_imports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
+    fn find_imports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
         // import java.util.Vector;
         // import static foo.Bar.*;
         let mut out: Vec<String> = Vec::new();
@@ -1319,7 +1492,13 @@ impl LanguageDriver for JavaDriver {
         Ok(out)
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
 
         symbols.extend(run_query(
@@ -1376,7 +1555,13 @@ impl LanguageDriver for JavaDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/java_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/java_prune.scm"),
+            "body",
+        )?;
         Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
@@ -1405,24 +1590,96 @@ impl LanguageDriver for CSharpDriver {
         tree_sitter_c_sharp::language()
     }
 
-    fn find_imports(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<String>> {
+    fn find_imports(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<String>> {
         let mut out: Vec<String> = Vec::new();
-        out.extend(run_query_strings(source, root, &language, r#"(using_directive (identifier) @path)"#, "path")?);
-        out.extend(run_query_strings(source, root, &language, r#"(using_directive (qualified_name) @path)"#, "path")?);
-        out.extend(run_query_strings(source, root, &language, r#"(using_directive (alias_qualified_name) @path)"#, "path")?);
+        out.extend(run_query_strings(
+            source,
+            root,
+            &language,
+            r#"(using_directive (identifier) @path)"#,
+            "path",
+        )?);
+        out.extend(run_query_strings(
+            source,
+            root,
+            &language,
+            r#"(using_directive (qualified_name) @path)"#,
+            "path",
+        )?);
+        out.extend(run_query_strings(
+            source,
+            root,
+            &language,
+            r#"(using_directive (alias_qualified_name) @path)"#,
+            "path",
+        )?);
         Ok(out)
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
 
-        symbols.extend(run_query(source, root, &language, r#"(class_declaration name: (identifier) @name) @def"#, "class", false)?);
-        symbols.extend(run_query(source, root, &language, r#"(struct_declaration name: (identifier) @name) @def"#, "struct", false)?);
-        symbols.extend(run_query(source, root, &language, r#"(interface_declaration name: (identifier) @name) @def"#, "interface", false)?);
-        symbols.extend(run_query(source, root, &language, r#"(enum_declaration name: (identifier) @name) @def"#, "enum", false)?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(class_declaration name: (identifier) @name) @def"#,
+            "class",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(struct_declaration name: (identifier) @name) @def"#,
+            "struct",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(interface_declaration name: (identifier) @name) @def"#,
+            "interface",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(enum_declaration name: (identifier) @name) @def"#,
+            "enum",
+            false,
+        )?);
 
-        symbols.extend(run_query(source, root, &language, r#"(method_declaration name: (identifier) @name) @def"#, "method", true)?);
-        symbols.extend(run_query(source, root, &language, r#"(constructor_declaration name: (identifier) @name) @def"#, "constructor", true)?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(method_declaration name: (identifier) @name) @def"#,
+            "method",
+            true,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(constructor_declaration name: (identifier) @name) @def"#,
+            "constructor",
+            true,
+        )?);
 
         Ok(symbols)
     }
@@ -1435,7 +1692,13 @@ impl LanguageDriver for CSharpDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/csharp_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/csharp_prune.scm"),
+            "body",
+        )?;
         Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
@@ -1464,15 +1727,56 @@ impl LanguageDriver for PhpDriver {
         tree_sitter_php::LANGUAGE_PHP.into()
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
 
-        symbols.extend(run_query(source, root, &language, r#"(class_declaration name: (name) @name) @def"#, "class", false)?);
-        symbols.extend(run_query(source, root, &language, r#"(interface_declaration name: (name) @name) @def"#, "interface", false)?);
-        symbols.extend(run_query(source, root, &language, r#"(trait_declaration name: (name) @name) @def"#, "trait", false)?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(class_declaration name: (name) @name) @def"#,
+            "class",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(interface_declaration name: (name) @name) @def"#,
+            "interface",
+            false,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(trait_declaration name: (name) @name) @def"#,
+            "trait",
+            false,
+        )?);
 
-        symbols.extend(run_query(source, root, &language, r#"(function_definition name: (name) @name) @def"#, "function", true)?);
-        symbols.extend(run_query(source, root, &language, r#"(method_declaration name: (name) @name) @def"#, "method", true)?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(function_definition name: (name) @name) @def"#,
+            "function",
+            true,
+        )?);
+        symbols.extend(run_query(
+            source,
+            root,
+            &language,
+            r#"(method_declaration name: (name) @name) @def"#,
+            "method",
+            true,
+        )?);
 
         Ok(symbols)
     }
@@ -1485,7 +1789,13 @@ impl LanguageDriver for PhpDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(source, root, &language, include_str!("../queries/php_prune.scm"), "body")?;
+        let bodies = run_query_byte_ranges(
+            source,
+            root,
+            &language,
+            include_str!("../queries/php_prune.scm"),
+            "body",
+        )?;
         Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
@@ -1521,35 +1831,53 @@ impl LanguageDriver for ProtoDriver {
         tree_sitter_proto::LANGUAGE.into()
     }
 
-    fn extract_skeleton(&self, _path: &Path, source: &[u8], root: Node, language: Language) -> Result<Vec<Symbol>> {
+    fn extract_skeleton(
+        &self,
+        _path: &Path,
+        source: &[u8],
+        root: Node,
+        language: Language,
+    ) -> Result<Vec<Symbol>> {
         let mut symbols: Vec<Symbol> = Vec::new();
 
         // Top-level services
         symbols.extend(run_query(
-            source, root, &language,
+            source,
+            root,
+            &language,
             r#"(service (service_name (identifier) @name)) @def"#,
-            "service", false,
+            "service",
+            false,
         )?);
 
         // Top-level messages
         symbols.extend(run_query(
-            source, root, &language,
+            source,
+            root,
+            &language,
             r#"(message (message_name (identifier) @name)) @def"#,
-            "message", false,
+            "message",
+            false,
         )?);
 
         // Top-level enums
         symbols.extend(run_query(
-            source, root, &language,
+            source,
+            root,
+            &language,
             r#"(enum (enum_name (identifier) @name)) @def"#,
-            "enum", false,
+            "enum",
+            false,
         )?);
 
         // RPC methods inside services (pruned = true so they collapse in skeleton view)
         symbols.extend(run_query(
-            source, root, &language,
+            source,
+            root,
+            &language,
             r#"(rpc (rpc_name (identifier) @name)) @def"#,
-            "rpc", true,
+            "rpc",
+            true,
         )?);
 
         Ok(symbols)
@@ -1635,14 +1963,23 @@ fn strip_string_quotes(s: &str) -> String {
         let bytes = t.as_bytes();
         let first = bytes[0];
         let last = bytes[t.len() - 1];
-        if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') || (first == b'`' && last == b'`') {
+        if (first == b'\'' && last == b'\'')
+            || (first == b'"' && last == b'"')
+            || (first == b'`' && last == b'`')
+        {
             return t[1..t.len() - 1].to_string();
         }
     }
     t.to_string()
 }
 
-fn run_query_strings(source: &[u8], root: Node, language: &Language, query_src: &str, cap: &str) -> Result<Vec<String>> {
+fn run_query_strings(
+    source: &[u8],
+    root: Node,
+    language: &Language,
+    query_src: &str,
+    cap: &str,
+) -> Result<Vec<String>> {
     let query = Query::new(language, query_src).context("Failed to compile tree-sitter query")?;
     let mut cursor = QueryCursor::new();
 
@@ -1734,7 +2071,9 @@ pub fn analyze_file(path: &Path) -> Result<FileSymbols> {
     let abs: PathBuf = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get current dir")?.join(path)
+        std::env::current_dir()
+            .context("Failed to get current dir")?
+            .join(path)
     };
 
     let driver = language_config()
@@ -1844,15 +2183,20 @@ pub fn read_symbol(path: &Path, symbol_name: &str) -> Result<String> {
     read_symbol_with_options(path, symbol_name, false)
 }
 
-pub fn read_symbol_with_options(path: &Path, symbol_name: &str, skeleton_only: bool) -> Result<String> {
+pub fn read_symbol_with_options(
+    path: &Path,
+    symbol_name: &str,
+    skeleton_only: bool,
+) -> Result<String> {
     let abs: PathBuf = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get cwd")?.join(path)
+        std::env::current_dir()
+            .context("Failed to get cwd")?
+            .join(path)
     };
 
-    let raw = std::fs::read(&abs)
-        .with_context(|| format!("Failed to read {}", abs.display()))?;
+    let raw = std::fs::read(&abs).with_context(|| format!("Failed to read {}", abs.display()))?;
     if raw.contains(&0u8) {
         return Err(anyhow!("Binary file — cannot extract symbol"));
     }
@@ -1868,7 +2212,9 @@ pub fn read_symbol_with_options(path: &Path, symbol_name: &str, skeleton_only: b
     let source = source_text.as_bytes();
 
     let mut parser = Parser::new();
-    parser.set_language(&language).context("Failed to set tree-sitter language")?;
+    parser
+        .set_language(&language)
+        .context("Failed to set tree-sitter language")?;
     let tree = parser
         .parse(&source_text, None)
         .ok_or_else(|| anyhow!("Tree-sitter parse failed for {}", abs.display()))?;
@@ -1938,16 +2284,28 @@ pub fn read_symbol_with_options(path: &Path, symbol_name: &str, skeleton_only: b
     const MAX_SYMBOL_LINES: usize = 500;
 
     let body = &source_text[*start_byte..*end_byte];
-    let start_line = source_text[..*start_byte].bytes().filter(|&b| b == b'\n').count() + 1;
-    let end_line   = source_text[..*end_byte].bytes().filter(|&b| b == b'\n').count() + 1;
+    let start_line = source_text[..*start_byte]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+        + 1;
+    let end_line = source_text[..*end_byte]
+        .bytes()
+        .filter(|&b| b == b'\n')
+        .count()
+        + 1;
     let symbol_lines = end_line.saturating_sub(start_line) + 1;
 
-    let header = format!("// {kind} `{name}` — {}:L{start_line}-L{end_line}\n", abs.display());
+    let header = format!(
+        "// {kind} `{name}` — {}:L{start_line}-L{end_line}\n",
+        abs.display()
+    );
 
     let body = if skeleton_only {
         // Reuse the same pruning logic as render_skeleton(), but apply only the
         // replacements that fall within this symbol's byte range.
-        let mut ranges = driver.body_prune_ranges(&abs, &source_text, source, root, language.clone())?;
+        let mut ranges =
+            driver.body_prune_ranges(&abs, &source_text, source, root, language.clone())?;
         ranges.retain(|(s, e, _)| {
             // Keep only ranges that overlap with the extracted symbol region.
             *e > *start_byte && *s < *end_byte
@@ -2025,12 +2383,11 @@ fn find_named_decls_raw(
             let cap_name = query.capture_names()[cap.index as usize];
             match cap_name {
                 "name" => {
-                    name_text = std::str::from_utf8(
-                        &source[cap.node.start_byte()..cap.node.end_byte()],
-                    )
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
+                    name_text =
+                        std::str::from_utf8(&source[cap.node.start_byte()..cap.node.end_byte()])
+                            .unwrap_or("")
+                            .trim()
+                            .to_string();
                 }
                 "def" => {
                     def_start = cap.node.start_byte();
@@ -2105,12 +2462,14 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
     let abs_dir: PathBuf = if target_dir.is_absolute() {
         target_dir.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get cwd")?.join(target_dir)
+        std::env::current_dir()
+            .context("Failed to get cwd")?
+            .join(target_dir)
     };
 
     let walker = WalkBuilder::new(&abs_dir)
         .standard_filters(true) // respects .gitignore, .git/info/exclude, default ignores
-        .hidden(true)            // skip dot-dirs like .git, node_modules handled by standard_filters
+        .hidden(true) // skip dot-dirs like .git, node_modules handled by standard_filters
         .build();
 
     let cfg = language_config();
@@ -2128,18 +2487,24 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
             continue;
         }
 
-        let Ok(raw) = std::fs::read(path) else { continue };
+        let Ok(raw) = std::fs::read(path) else {
+            continue;
+        };
         if raw.contains(&0u8) {
             continue; // binary
         }
-        let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
+        let Ok(source_text) = std::str::from_utf8(&raw) else {
+            continue;
+        };
 
         // Hot path: fast substring pre-filter before paying the tree-sitter parse cost.
         if !source_text.contains(symbol_name) {
             continue;
         }
 
-        let Some(driver) = cfg.driver_for_path(path) else { continue };
+        let Some(driver) = cfg.driver_for_path(path) else {
+            continue;
+        };
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
@@ -2147,7 +2512,9 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         if parser.set_language(&language).is_err() {
             continue;
         }
-        let Some(tree) = parser.parse(source_text, None) else { continue };
+        let Some(tree) = parser.parse(source_text, None) else {
+            continue;
+        };
         let root = tree.root_node();
 
         // AST-level reference collection — excludes comments and string literals.
@@ -2187,12 +2554,20 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         by_cat.entry(m.category).or_default().push(m);
     }
 
-    let order: [&'static str; 5] = ["Calls", "Type Refs", "Field Accesses", "Field Inits", "Other"];
+    let order: [&'static str; 5] = [
+        "Calls",
+        "Type Refs",
+        "Field Accesses",
+        "Field Inits",
+        "Other",
+    ];
     let total: usize = by_cat.values().map(|v| v.len()).sum();
     let mut out = format!("{} usage(s) of `{symbol_name}` found:\n\n", total);
 
     for cat in order {
-        let Some(mut items) = by_cat.remove(cat) else { continue };
+        let Some(mut items) = by_cat.remove(cat) else {
+            continue;
+        };
         items.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line_1.cmp(&b.line_1)));
         out.push_str(&format!("### {cat} ({})\n\n", items.len()));
         for m in &items {
@@ -2235,7 +2610,9 @@ pub fn propagation_checklist(
     let abs_dir: PathBuf = if target_dir.is_absolute() {
         target_dir.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get cwd")?.join(target_dir)
+        std::env::current_dir()
+            .context("Failed to get cwd")?
+            .join(target_dir)
     };
 
     let walker = WalkBuilder::new(&abs_dir)
@@ -2272,11 +2649,15 @@ pub fn propagation_checklist(
             continue;
         }
 
-        let Ok(raw) = std::fs::read(path) else { continue };
+        let Ok(raw) = std::fs::read(path) else {
+            continue;
+        };
         if raw.contains(&0u8) {
             continue;
         }
-        let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
+        let Ok(source_text) = std::str::from_utf8(&raw) else {
+            continue;
+        };
 
         // Hot path: substring prefilter. Keep it lean: if none of the omni names appear,
         // don't pay the tree-sitter parse cost.
@@ -2284,7 +2665,9 @@ pub fn propagation_checklist(
             continue;
         }
 
-        let Some(driver) = cfg.driver_for_path(path) else { continue };
+        let Some(driver) = cfg.driver_for_path(path) else {
+            continue;
+        };
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
@@ -2292,7 +2675,9 @@ pub fn propagation_checklist(
         if parser.set_language(&language).is_err() {
             continue;
         }
-        let Some(tree) = parser.parse(source_text, None) else { continue };
+        let Some(tree) = parser.parse(source_text, None) else {
+            continue;
+        };
         let root = tree.root_node();
 
         let mut hits: Vec<(u32, &'static str)> = Vec::new();
@@ -2350,7 +2735,10 @@ pub fn propagation_checklist(
     const MAX_CHARS_TOTAL: usize = 8_000;
 
     let mut out = String::new();
-    out.push_str(&format!("## 📋 Propagation Checklist for `{}`\n", symbol_name));
+    out.push_str(&format!(
+        "## 📋 Propagation Checklist for `{}`\n",
+        symbol_name
+    ));
     out.push_str("*Review and update these files to ensure cross-service consistency.*\n\n");
 
     proto.sort_by(|a, b| a.0.cmp(&b.0));
@@ -2443,7 +2831,10 @@ pub fn propagation_checklist(
     }
 
     if proto.is_empty() && rust.is_empty() && ts.is_empty() && py.is_empty() && other.is_empty() {
-        out.push_str(&format!("No AST-accurate usages found under {}.\n", abs_dir.display()));
+        out.push_str(&format!(
+            "No AST-accurate usages found under {}.\n",
+            abs_dir.display()
+        ));
     }
 
     Ok(out)
@@ -2502,11 +2893,15 @@ fn generate_casing_variants(base_name: &str) -> Vec<String> {
     }
 
     let to_pascal_word = |w: &str| -> String {
-        if w.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        if w.chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        {
             return w.to_string();
         }
         let mut it = w.chars();
-        let Some(first) = it.next() else { return String::new() };
+        let Some(first) = it.next() else {
+            return String::new();
+        };
         let mut out = String::new();
         out.extend(first.to_uppercase());
         out.push_str(&it.as_str().to_ascii_lowercase());
@@ -2616,7 +3011,9 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
     let abs_dir: PathBuf = if target_dir.is_absolute() {
         target_dir.to_path_buf()
     } else {
-        std::env::current_dir().context("Failed to get cwd")?.join(target_dir)
+        std::env::current_dir()
+            .context("Failed to get cwd")?
+            .join(target_dir)
     };
 
     let trait_or_interface = trait_or_interface.trim();
@@ -2655,16 +3052,22 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
             _ => continue,
         };
 
-        let Ok(raw) = std::fs::read(path) else { continue };
+        let Ok(raw) = std::fs::read(path) else {
+            continue;
+        };
         if raw.contains(&0u8) {
             continue;
         }
-        let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
+        let Ok(source_text) = std::str::from_utf8(&raw) else {
+            continue;
+        };
         if !source_text.contains(trait_or_interface) {
             continue;
         }
 
-        let Some(driver) = cfg.driver_for_path(path) else { continue };
+        let Some(driver) = cfg.driver_for_path(path) else {
+            continue;
+        };
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
@@ -2672,7 +3075,9 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
         if parser.set_language(&language).is_err() {
             continue;
         }
-        let Some(tree) = parser.parse(source_text, None) else { continue };
+        let Some(tree) = parser.parse(source_text, None) else {
+            continue;
+        };
         let root = tree.root_node();
 
         let text_lines: Vec<&str> = source_text.lines().collect();
@@ -2689,7 +3094,9 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
                 ];
 
                 for qsrc in queries {
-                    let Ok(query) = Query::new(&language, qsrc) else { continue };
+                    let Ok(query) = Query::new(&language, qsrc) else {
+                        continue;
+                    };
                     let mut cursor = QueryCursor::new();
                     let mut matches = cursor.matches(&query, root, source);
                     while let Some(m) = matches.next() {
@@ -2700,17 +3107,21 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
                             let cap_name = query.capture_names()[cap.index as usize];
                             match cap_name {
                                 "trait" => {
-                                    let t = std::str::from_utf8(&source[cap.node.start_byte()..cap.node.end_byte()])
-                                        .unwrap_or("")
-                                        .trim();
+                                    let t = std::str::from_utf8(
+                                        &source[cap.node.start_byte()..cap.node.end_byte()],
+                                    )
+                                    .unwrap_or("")
+                                    .trim();
                                     if !t.is_empty() {
                                         trait_name = Some(t.to_string());
                                     }
                                 }
                                 "impl" => {
-                                    let t = std::str::from_utf8(&source[cap.node.start_byte()..cap.node.end_byte()])
-                                        .unwrap_or("")
-                                        .trim();
+                                    let t = std::str::from_utf8(
+                                        &source[cap.node.start_byte()..cap.node.end_byte()],
+                                    )
+                                    .unwrap_or("")
+                                    .trim();
                                     if !t.is_empty() {
                                         impl_name = Some(t.to_string());
                                     }
@@ -2725,7 +3136,9 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
                         if trait_name.as_deref() != Some(trait_or_interface) {
                             continue;
                         }
-                        let Some(implementor) = impl_name else { continue };
+                        let Some(implementor) = impl_name else {
+                            continue;
+                        };
                         let row_0 = def_row_0.unwrap_or(0);
                         all_results.push(ImplementationMatch {
                             language: "rust",
@@ -2756,7 +3169,9 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
 
                     let mut cw = n.walk();
                     for ch in n.children(&mut cw) {
-                        if class_name.is_none() && (ch.kind() == "type_identifier" || ch.kind() == "identifier") {
+                        if class_name.is_none()
+                            && (ch.kind() == "type_identifier" || ch.kind() == "identifier")
+                        {
                             class_name = Some(
                                 std::str::from_utf8(&source[ch.start_byte()..ch.end_byte()])
                                     .unwrap_or("")
@@ -2769,8 +3184,12 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
                         }
                     }
 
-                    let Some(implementor) = class_name.filter(|s| !s.is_empty()) else { continue };
-                    let Some(impls) = implements_clause else { continue };
+                    let Some(implementor) = class_name.filter(|s| !s.is_empty()) else {
+                        continue;
+                    };
+                    let Some(impls) = implements_clause else {
+                        continue;
+                    };
 
                     let mut found = false;
                     let mut to_visit: Vec<Node> = vec![impls];
@@ -2779,9 +3198,10 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
                         for ch in x.children(&mut xw) {
                             let k = ch.kind();
                             if k == "type_identifier" || k == "identifier" {
-                                let t = std::str::from_utf8(&source[ch.start_byte()..ch.end_byte()])
-                                    .unwrap_or("")
-                                    .trim();
+                                let t =
+                                    std::str::from_utf8(&source[ch.start_byte()..ch.end_byte()])
+                                        .unwrap_or("")
+                                        .trim();
                                 if t == trait_or_interface {
                                     found = true;
                                 }
@@ -2820,10 +3240,18 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
         by_lang.entry(m.language).or_default().push(m);
     }
     let total: usize = by_lang.values().map(|v| v.len()).sum();
-    let mut out = format!("{} implementation(s) of `{}` found:\n\n", total, trait_or_interface);
+    let mut out = format!(
+        "{} implementation(s) of `{}` found:\n\n",
+        total, trait_or_interface
+    );
 
     for (lang, mut items) in by_lang {
-        items.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line_1.cmp(&b.line_1)).then_with(|| a.implementor.cmp(&b.implementor)));
+        items.sort_by(|a, b| {
+            a.file
+                .cmp(&b.file)
+                .then_with(|| a.line_1.cmp(&b.line_1))
+                .then_with(|| a.implementor.cmp(&b.implementor))
+        });
         out.push_str(&format!("### {lang} ({})\n\n", items.len()));
         for m in &items {
             out.push_str(&format!("[{}:{}] {}\n", m.file, m.line_1, m.implementor));
@@ -2835,7 +3263,12 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
 
 /// Recursively collect AST leaf identifier nodes that match `symbol_name`,
 /// skipping comment and string-literal subtrees entirely.
-fn collect_identifier_refs(node: Node, source: &[u8], symbol_name: &str, out: &mut Vec<(u32, &'static str)>) {
+fn collect_identifier_refs(
+    node: Node,
+    source: &[u8],
+    symbol_name: &str,
+    out: &mut Vec<(u32, &'static str)>,
+) {
     let kind = node.kind();
 
     // Prune entire comment / string subtrees — no matches inside these nodes.
@@ -2887,7 +3320,9 @@ fn collect_identifier_refs(node: Node, source: &[u8], symbol_name: &str, out: &m
 
 fn has_ancestor_kind(mut node: Node, target_kinds: &[&str]) -> bool {
     for _ in 0..8 {
-        let Some(parent) = node.parent() else { return false };
+        let Some(parent) = node.parent() else {
+            return false;
+        };
         let k = parent.kind();
         if target_kinds.iter().any(|t| *t == k) {
             return true;
@@ -2905,7 +3340,16 @@ fn usage_category(node: Node) -> &'static str {
     }
 
     // Proto + other grammars: type refs are usually nested under these nodes.
-    if has_ancestor_kind(node, &["message_name", "enum_name", "service_name", "message_or_enum_type", "type"]) {
+    if has_ancestor_kind(
+        node,
+        &[
+            "message_name",
+            "enum_name",
+            "service_name",
+            "message_or_enum_type",
+            "type",
+        ],
+    ) {
         return "Type Refs";
     }
 
@@ -2930,7 +3374,8 @@ fn usage_category(node: Node) -> &'static str {
             | "property_identifier"
             | "shorthand_property_identifier"
             | "shorthand_property_identifier_pattern"
-    ) && has_ancestor_kind(node, &["field_initializer", "property_assignment", "pair"]) {
+    ) && has_ancestor_kind(node, &["field_initializer", "property_assignment", "pair"])
+    {
         return "Field Inits";
     }
 
@@ -3122,7 +3567,8 @@ pub fn repo_map_with_filter(
     // This prevents expensive full-repo parsing while fixing UX where users
     // expect search_filter to match function/const/class names.
     const MAX_SYMBOL_FILTER_FILES: usize = 300;
-    let symbol_filter_enabled = !search_tokens.is_empty() && supported_candidates.len() <= MAX_SYMBOL_FILTER_FILES;
+    let symbol_filter_enabled =
+        !search_tokens.is_empty() && supported_candidates.len() <= MAX_SYMBOL_FILTER_FILES;
 
     for (rel_path, filename, dir_rel, abs_path) in supported_candidates {
         let mut matched = search_tokens.is_empty();
@@ -3233,7 +3679,11 @@ pub fn repo_map_with_filter(
     // ── 0-file guard (enterprise diagnostics) ───────────────────────────
     if kept_source_files == 0 {
         let regex_note = if let Some(sf) = search_filter {
-            let looks_regex = sf.contains(".*") || sf.contains('^') || sf.contains('$') || sf.contains('[') || sf.contains(']');
+            let looks_regex = sf.contains(".*")
+                || sf.contains('^')
+                || sf.contains('$')
+                || sf.contains('[')
+                || sf.contains(']');
             if looks_regex {
                 "> ⚠️ **NOTE:** `search_filter` is a simple case-insensitive substring match (with `|` for OR). Regex characters (like `.*`) are treated as literal text. Consider simplifying your filter to plain keywords if you get no results.\n\n"
             } else {
@@ -3263,8 +3713,8 @@ Diagnostics:\n\
 • If `search_filter` was set, it may have excluded everything — try without it.{}\n\
 Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
             regex_note,
-            target_dir.display()
-            ,filter_hint
+            target_dir.display(),
+            filter_hint
         ));
     }
 
@@ -3274,13 +3724,14 @@ Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
         FoldersOnly,
     }
 
-    let disclosure = if kept_source_files <= DEEP_MAX_FILES && kept_source_files <= STRICT_SUMMARY_THRESHOLD {
-        Disclosure::Deep
-    } else if kept_source_files <= FILES_ONLY_MAX_FILES {
-        Disclosure::FilesOnly
-    } else {
-        Disclosure::FoldersOnly
-    };
+    let disclosure =
+        if kept_source_files <= DEEP_MAX_FILES && kept_source_files <= STRICT_SUMMARY_THRESHOLD {
+            Disclosure::Deep
+        } else if kept_source_files <= FILES_ONLY_MAX_FILES {
+            Disclosure::FilesOnly
+        } else {
+            Disclosure::FoldersOnly
+        };
 
     // Push text while enforcing a hard maximum length.
     let mut push = |s: &str| -> bool {
@@ -3313,7 +3764,11 @@ Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
     // Proactive guardrail: agents often try regex syntax in search_filter.
     // We treat search_filter as substring-only, so regex metacharacters are literal.
     if let Some(sf) = search_filter {
-        let looks_regex = sf.contains(".*") || sf.contains('^') || sf.contains('$') || sf.contains('[') || sf.contains(']');
+        let looks_regex = sf.contains(".*")
+            || sf.contains('^')
+            || sf.contains('$')
+            || sf.contains('[')
+            || sf.contains(']');
         if looks_regex {
             push("> ⚠️ **NOTE:** `search_filter` is a simple case-insensitive substring match (with `|` for OR). Regex characters (like `.*`) are treated as literal text. Consider simplifying your filter to plain keywords if you get no results.\n\n");
         }
@@ -3391,7 +3846,9 @@ Supported extensions include: rs, ts, tsx, js, jsx, py, go.",
                         break;
                     }
 
-                    let Ok(source_text) = std::fs::read_to_string(&abs_file) else { continue };
+                    let Ok(source_text) = std::fs::read_to_string(&abs_file) else {
+                        continue;
+                    };
                     let syms = extract_symbols_from_source(&abs_file, &source_text);
                     let source_lines: Vec<&str> = source_text.lines().collect();
 
@@ -3465,50 +3922,198 @@ fn is_public_symbol(sym: &Symbol, source_lines: &[&str], path: &Path) -> bool {
 /// Names are exact (case-sensitive); entries are checked with `contains()`.
 static CALL_NOISE: &[&str] = &[
     // Rust — core/std
-    "clone", "to_string", "to_owned", "into", "from", "default",
-    "trim", "trim_start", "trim_end", "to_lowercase", "to_uppercase",
-    "is_empty", "is_some", "is_none", "len", "push", "pop", "clear",
-    "iter", "iter_mut", "into_iter", "collect", "map", "filter",
-    "flat_map", "filter_map", "fold", "reduce", "any", "all", "find",
-    "next", "take", "skip", "enumerate", "zip", "chain", "rev",
-    "unwrap", "unwrap_or", "unwrap_or_else", "expect",
-    "ok", "err", "ok_or", "ok_or_else", "and_then", "or_else",
-    "as_ref", "as_mut", "as_str", "as_bytes", "as_slice", "as_deref",
-    "to_str", "to_path_buf", "to_string_lossy",
-    "contains", "starts_with", "ends_with", "split", "splitn",
-    "find", "rfind", "replace", "replacen",
+    "clone",
+    "to_string",
+    "to_owned",
+    "into",
+    "from",
+    "default",
+    "trim",
+    "trim_start",
+    "trim_end",
+    "to_lowercase",
+    "to_uppercase",
+    "is_empty",
+    "is_some",
+    "is_none",
+    "len",
+    "push",
+    "pop",
+    "clear",
+    "iter",
+    "iter_mut",
+    "into_iter",
+    "collect",
+    "map",
+    "filter",
+    "flat_map",
+    "filter_map",
+    "fold",
+    "reduce",
+    "any",
+    "all",
+    "find",
+    "next",
+    "take",
+    "skip",
+    "enumerate",
+    "zip",
+    "chain",
+    "rev",
+    "unwrap",
+    "unwrap_or",
+    "unwrap_or_else",
+    "expect",
+    "ok",
+    "err",
+    "ok_or",
+    "ok_or_else",
+    "and_then",
+    "or_else",
+    "as_ref",
+    "as_mut",
+    "as_str",
+    "as_bytes",
+    "as_slice",
+    "as_deref",
+    "to_str",
+    "to_path_buf",
+    "to_string_lossy",
+    "contains",
+    "starts_with",
+    "ends_with",
+    "split",
+    "splitn",
+    "find",
+    "rfind",
+    "replace",
+    "replacen",
     "push_str",
-    "get", "set", "insert", "remove", "retain",
-    "join", "extend", "append", "truncate", "resize",
-    "new", "with_capacity", "capacity",
-    "path", "file_name", "parent", "extension", "exists", "is_file", "is_dir",
-    "read_to_string", "read_dir", "create_dir_all",
-    "send", "recv", "await", "spawn", "block_on",
-    "context", "with_context", "map_err",
-    "lock", "try_lock", "read", "write",
-    "format", "parse", "lines", "chars", "bytes",
-    "sort", "sort_by", "sort_by_key", "dedup",
-    "first", "last", "nth",
-    "min", "max", "min_by", "max_by", "min_by_key", "max_by_key",
-    "sum", "product", "count", "position",
-    "flush", "close",
+    "get",
+    "set",
+    "insert",
+    "remove",
+    "retain",
+    "join",
+    "extend",
+    "append",
+    "truncate",
+    "resize",
+    "new",
+    "with_capacity",
+    "capacity",
+    "path",
+    "file_name",
+    "parent",
+    "extension",
+    "exists",
+    "is_file",
+    "is_dir",
+    "read_to_string",
+    "read_dir",
+    "create_dir_all",
+    "send",
+    "recv",
+    "await",
+    "spawn",
+    "block_on",
+    "context",
+    "with_context",
+    "map_err",
+    "lock",
+    "try_lock",
+    "read",
+    "write",
+    "format",
+    "parse",
+    "lines",
+    "chars",
+    "bytes",
+    "sort",
+    "sort_by",
+    "sort_by_key",
+    "dedup",
+    "first",
+    "last",
+    "nth",
+    "min",
+    "max",
+    "min_by",
+    "max_by",
+    "min_by_key",
+    "max_by_key",
+    "sum",
+    "product",
+    "count",
+    "position",
+    "flush",
+    "close",
     // Python builtins / common methods
-    "append", "extend", "update", "keys", "values", "items",
-    "strip", "lstrip", "rstrip", "lower", "upper",
-    "encode", "decode", "format",
-    "isinstance", "hasattr", "getattr", "setattr",
-    "open", "print", "len", "range", "enumerate", "zip",
-    "list", "dict", "set", "tuple", "str", "int", "float", "bool",
-    "super", "type",
+    "append",
+    "extend",
+    "update",
+    "keys",
+    "values",
+    "items",
+    "strip",
+    "lstrip",
+    "rstrip",
+    "lower",
+    "upper",
+    "encode",
+    "decode",
+    "format",
+    "isinstance",
+    "hasattr",
+    "getattr",
+    "setattr",
+    "open",
+    "print",
+    "len",
+    "range",
+    "enumerate",
+    "zip",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "str",
+    "int",
+    "float",
+    "bool",
+    "super",
+    "type",
     // TypeScript/JavaScript
-    "toString", "valueOf", "hasOwnProperty", "bind", "call", "apply",
-    "then", "catch", "finally",
-    "reduce", "forEach", "some", "every", "includes", "indexOf",
-    "slice", "splice", "concat", "flat", "flatMap",
-    "trim", "split", "replace", "match", "test",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "bind",
+    "call",
+    "apply",
+    "then",
+    "catch",
+    "finally",
+    "reduce",
+    "forEach",
+    "some",
+    "every",
+    "includes",
+    "indexOf",
+    "slice",
+    "splice",
+    "concat",
+    "flat",
+    "flatMap",
+    "trim",
+    "split",
+    "replace",
+    "match",
+    "test",
     "JSON",
     // Go
-    "Error", "String", "Len",
+    "Error",
+    "String",
+    "Len",
 ];
 
 /// Analyse the complete call hierarchy for a named symbol.
@@ -3564,11 +4169,15 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
             continue;
         }
 
-        let Ok(raw) = std::fs::read(path) else { continue };
+        let Ok(raw) = std::fs::read(path) else {
+            continue;
+        };
         if raw.contains(&0u8) {
             continue;
         }
-        let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
+        let Ok(source_text) = std::str::from_utf8(&raw) else {
+            continue;
+        };
         if !source_text.contains(symbol_name) {
             continue;
         }
@@ -3581,7 +4190,9 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
         if parser.set_language(&language).is_err() {
             continue;
         }
-        let Some(tree) = parser.parse(source_text, None) else { continue };
+        let Some(tree) = parser.parse(source_text, None) else {
+            continue;
+        };
         let root = tree.root_node();
 
         let text_lines: Vec<&str> = source_text.lines().collect();
@@ -3655,9 +4266,7 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
     let mut out = format!("## Call Hierarchy: `{symbol_name}`\n\n");
 
     if definitions.is_empty() {
-        out.push_str(
-            "> No definition found in target_dir — showing inbound call sites only.\n\n",
-        );
+        out.push_str("> No definition found in target_dir — showing inbound call sites only.\n\n");
     } else {
         out.push_str("### Definition\n");
         for d in &definitions {
@@ -3894,7 +4503,10 @@ fn diagnostics_parse_cargo(cargo_output: &str, repo_root: &Path) -> Result<Strin
         let Some(msg) = json.get("message") else {
             continue;
         };
-        let level = msg.get("level").and_then(|l| l.as_str()).unwrap_or("unknown");
+        let level = msg
+            .get("level")
+            .and_then(|l| l.as_str())
+            .unwrap_or("unknown");
         if level != "error" && level != "warning" {
             continue;
         }
@@ -3916,11 +4528,11 @@ fn diagnostics_parse_cargo(cargo_output: &str, repo_root: &Path) -> Result<Strin
 
         if let Some(spans_arr) = spans {
             if let Some(span) = spans_arr.first() {
-                let file = span.get("file_name").and_then(|f| f.as_str()).unwrap_or("?");
-                let line_start = span
-                    .get("line_start")
-                    .and_then(|l| l.as_u64())
-                    .unwrap_or(0);
+                let file = span
+                    .get("file_name")
+                    .and_then(|f| f.as_str())
+                    .unwrap_or("?");
+                let line_start = span.get("line_start").and_then(|l| l.as_u64()).unwrap_or(0);
                 let col = span
                     .get("column_start")
                     .and_then(|c| c.as_u64())
@@ -3989,7 +4601,11 @@ fn diagnostics_parse_cargo(cargo_output: &str, repo_root: &Path) -> Result<Strin
 }
 
 fn diagnostics_parse_tsc(stdout: &str, stderr: &str) -> Result<String> {
-    let combined = if stdout.trim().is_empty() { stderr } else { stdout };
+    let combined = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
     if combined.trim().is_empty() {
         return Ok("No TypeScript errors found — project compiles cleanly.\n".to_string());
     }

@@ -37,7 +37,10 @@ fn crunch_text_for_cdata(input: &str) -> String {
     out.trim_end().to_string()
 }
 
-pub fn build_context_xml(repository_map: Option<&str>, files: &[(String, String)]) -> Result<String> {
+pub fn build_context_xml(
+    repository_map: Option<&str>,
+    files: &[(String, String)],
+) -> Result<String> {
     let mut writer = Writer::new(Cursor::new(Vec::new()));
 
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))?;

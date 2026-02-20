@@ -225,18 +225,21 @@ fn ast_guided_chunks(
     let mut g_end: u32 = 0;
     let mut g_syms: Vec<String> = Vec::new();
 
-    let flush = |start: u32, end: u32, syms: &[String], src: &[&str], out: &mut Vec<PreparedChunk>| {
-        if start >= end || syms.is_empty() { return; }
-        let s = start as usize;
-        let e = (end as usize).min(src.len());
-        let sym_header = syms.join(", ");
-        out.push(PreparedChunk {
-            symbols: syms.to_vec(),
-            start_line: start,
-            end_line: end.saturating_sub(1),
-            text: format!("symbols: {}\n{}", sym_header, src[s..e].join("\n")),
-        });
-    };
+    let flush =
+        |start: u32, end: u32, syms: &[String], src: &[&str], out: &mut Vec<PreparedChunk>| {
+            if start >= end || syms.is_empty() {
+                return;
+            }
+            let s = start as usize;
+            let e = (end as usize).min(src.len());
+            let sym_header = syms.join(", ");
+            out.push(PreparedChunk {
+                symbols: syms.to_vec(),
+                start_line: start,
+                end_line: end.saturating_sub(1),
+                text: format!("symbols: {}\n{}", sym_header, src[s..e].join("\n")),
+            });
+        };
 
     let mut first_region = true;
     for region in &regions {
@@ -310,7 +313,12 @@ struct IndexMetaV2 {
 }
 
 impl CodebaseIndex {
-    pub fn open(repo_root: &Path, db_dir: &Path, model_id: &str, chunk_lines: usize) -> Result<Self> {
+    pub fn open(
+        repo_root: &Path,
+        db_dir: &Path,
+        model_id: &str,
+        chunk_lines: usize,
+    ) -> Result<Self> {
         let db_dir = if db_dir.is_absolute() {
             db_dir.to_path_buf()
         } else {
@@ -428,7 +436,12 @@ impl CodebaseIndex {
             let text = if sym_names.is_empty() {
                 format!("passage: file: {}\n{}", rel_path, body)
             } else {
-                format!("symbols: {}\npassage: file: {}\n{}", sym_names.join(", "), rel_path, body)
+                format!(
+                    "symbols: {}\npassage: file: {}\n{}",
+                    sym_names.join(", "),
+                    rel_path,
+                    body
+                )
             };
             vec![PreparedChunk {
                 symbols: sym_names,
@@ -499,7 +512,9 @@ impl CodebaseIndex {
                 }
             }
 
-            if let Some(entry) = self.embed_file(&rel_norm, &job.abs_path, bytes.to_vec(), size, hash) {
+            if let Some(entry) =
+                self.embed_file(&rel_norm, &job.abs_path, bytes.to_vec(), size, hash)
+            {
                 self.store.entries.insert(rel_norm, entry);
                 indexed += 1;
             }
@@ -543,7 +558,11 @@ impl CodebaseIndex {
                 }
                 Some(e) => {
                     // Same size → read + hash to confirm; handles git branch-switch.
-                    candidates.push((rel.clone(), abs.clone(), CandidateKind::SameSize(e.hash.clone())));
+                    candidates.push((
+                        rel.clone(),
+                        abs.clone(),
+                        CandidateKind::SameSize(e.hash.clone()),
+                    ));
                 }
             }
         }
@@ -561,13 +580,17 @@ impl CodebaseIndex {
             .par_iter()
             .filter_map(|(rel, abs, kind)| {
                 let raw = std::fs::read(abs).ok()?;
-                if raw.contains(&0u8) { return None; } // binary
+                if raw.contains(&0u8) {
+                    return None;
+                } // binary
                 let size = raw.len() as u64;
                 let hash = xxh3_hex(&raw);
 
                 // SameSize: drop if hash matches — truly unchanged (git checkout no-op).
                 if let CandidateKind::SameSize(stored_hash) = kind {
-                    if *stored_hash == hash { return None; }
+                    if *stored_hash == hash {
+                        return None;
+                    }
                 }
 
                 let is_new = matches!(kind, CandidateKind::New);
@@ -587,7 +610,11 @@ impl CodebaseIndex {
         for (rel, abs, raw, size, hash, is_new) in read_results {
             if let Some(entry) = self.embed_file(&rel, &abs, raw, size, hash) {
                 self.store.entries.insert(rel, entry);
-                if is_new { added += 1; } else { updated += 1; }
+                if is_new {
+                    added += 1;
+                } else {
+                    updated += 1;
+                }
             }
         }
 
@@ -608,7 +635,9 @@ impl CodebaseIndex {
         let abs = self.repo_root.join(&rel_norm);
 
         if let Some(e) = self.store.entries.get(&rel_norm) {
-            if Self::is_content_unchanged(e, size, &hash) { return Ok(()); }
+            if Self::is_content_unchanged(e, size, &hash) {
+                return Ok(());
+            }
         }
 
         if let Some(entry) = self.embed_file(&rel_norm, &abs, bytes.to_vec(), size, hash) {
@@ -690,7 +719,9 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
     dot / (norm_a * norm_b)
 }
 
@@ -791,7 +822,7 @@ mod tests {
         let qv = vec![1.0f32, 1.0, 0.0, 0.0];
 
         // ── Act ───────────────────────────────────────────────────────────
-        let rust_score  = score_file_entry(&toks, &qv, &rust_entry);
+        let rust_score = score_file_entry(&toks, &qv, &rust_entry);
         let proto_score = score_file_entry(&toks, &qv, &proto_entry);
 
         // ── Assert ────────────────────────────────────────────────────────
@@ -817,9 +848,11 @@ mod tests {
         println!("\n═══ Symbol Sniper Proof ══════════════════════════════");
         println!("  src/convert_request.rs   score = {rust_score:.4}  ← Stage 1 (Sniper)");
         println!("  proto/engine.proto        score = {proto_score:.4}  ← Stage 2 (Cosine)");
-        println!("  Gap = {:.4}  (guaranteed ≥ {:.2})",
+        println!(
+            "  Gap = {:.4}  (guaranteed ≥ {:.2})",
             rust_score - proto_score,
-            EXACT_SYMBOL_SCORE - 1.0);
+            EXACT_SYMBOL_SCORE - 1.0
+        );
         println!("══════════════════════════════════════════════════════\n");
     }
 
@@ -828,10 +861,7 @@ mod tests {
     #[test]
     fn sniper_requires_exact_token_not_substring() {
         let toks = tokens("request handling logic");
-        let entry = mock_entry(
-            vec!["impl ConvertRequest"],
-            vec![0.5, 0.5, 0.5, 0.5],
-        );
+        let entry = mock_entry(vec!["impl ConvertRequest"], vec![0.5, 0.5, 0.5, 0.5]);
         let qv = vec![0.0f32; 4];
         let score = score_file_entry(&toks, &qv, &entry);
         assert!(
@@ -840,4 +870,3 @@ mod tests {
         );
     }
 }
-

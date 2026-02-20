@@ -8,14 +8,14 @@ macro_rules! debug_log {
 	}};
 }
 
+pub mod chronos;
 pub mod config;
-pub mod scanner;
-pub mod mapper;
-pub mod slicer;
-pub mod xml_builder;
 pub mod inspector;
+pub mod mapper;
+pub mod scanner;
+pub mod server;
+pub mod slicer;
 pub mod universal;
 pub mod vector_store;
-pub mod server;
 pub mod workspace;
-pub mod chronos;
+pub mod xml_builder;

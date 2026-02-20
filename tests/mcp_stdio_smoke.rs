@@ -147,8 +147,14 @@ fn mcp_stdio_smoke() {
             .and_then(|x| x.get("text"))
             .and_then(|x| x.as_str())
             .expect("map_repo text");
-        assert!(!text.is_empty(), "map_repo should return a non-empty text map");
-        assert!(text.contains("src/"), "map_repo should reference src/ directory");
+        assert!(
+            !text.is_empty(),
+            "map_repo should return a non-empty text map"
+        );
+        assert!(
+            text.contains("src/"),
+            "map_repo should reference src/ directory"
+        );
     }
 
     // read_symbol

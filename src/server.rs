@@ -3,11 +3,15 @@ use serde_json::json;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use crate::config::load_config;
 use crate::chronos::{checkpoint_symbol, compare_symbol, list_checkpoints};
-use crate::inspector::{extract_symbols_from_source, render_skeleton, read_symbol_with_options, find_usages, find_implementations, repo_map_with_filter, call_hierarchy, run_diagnostics, propagation_checklist};
-use crate::slicer::{slice_paths_to_xml, slice_to_xml};
+use crate::config::load_config;
+use crate::inspector::{
+    call_hierarchy, extract_symbols_from_source, find_implementations, find_usages,
+    propagation_checklist, read_symbol_with_options, render_skeleton, repo_map_with_filter,
+    run_diagnostics,
+};
 use crate::scanner::{scan_workspace, ScanOptions};
+use crate::slicer::{slice_paths_to_xml, slice_to_xml};
 use crate::vector_store::{CodebaseIndex, IndexJob};
 use rayon::prelude::*;
 
@@ -136,7 +140,11 @@ impl ServerState {
         })
     }
 
-    fn tool_call(&mut self, id: serde_json::Value, params: &serde_json::Value) -> serde_json::Value {
+    fn tool_call(
+        &mut self,
+        id: serde_json::Value,
+        params: &serde_json::Value,
+    ) -> serde_json::Value {
         let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let args = params.get("arguments").cloned().unwrap_or(json!({}));
         let max_chars = negotiated_max_chars(&args);
@@ -162,7 +170,11 @@ impl ServerState {
         match name {
             // ── Megatools ────────────────────────────────────────────────
             "cortex_code_explorer" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
                 match action {
                     "map_overview" => {
                         let repo_root = self.repo_root_from_params(&args);
@@ -248,7 +260,11 @@ Please correct your target_dir (or pass repoPath explicitly).",
                 }
             }
             "cortex_symbol_analyzer" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
                 match action {
                     "read_source" => {
                         let repo_root = self.repo_root_from_params(&args);
@@ -446,7 +462,11 @@ Please correct your target_dir (or pass repoPath explicitly).",
                 }
             }
             "cortex_chronos" => {
-                let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
                 match action {
                     "save_checkpoint" => {
                         let repo_root = self.repo_root_from_params(&args);
@@ -592,63 +612,90 @@ Tip: use cortex_chronos(action=list_checkpoints) first to see what exists.".to_s
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("map_overview");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_code_explorer", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_code_explorer", "arguments": new_args }),
+                )
             }
             "get_context_slice" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("deep_slice");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_code_explorer", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_code_explorer", "arguments": new_args }),
+                )
             }
             "read_symbol" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("read_source");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }),
+                )
             }
             "find_usages" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("find_usages");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }),
+                )
             }
             "call_hierarchy" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("blast_radius");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }),
+                )
             }
             "propagation_checklist" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("propagation_checklist");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_symbol_analyzer", "arguments": new_args }),
+                )
             }
             "save_checkpoint" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("save_checkpoint");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_chronos", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_chronos", "arguments": new_args }),
+                )
             }
             "list_checkpoints" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("list_checkpoints");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_chronos", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_chronos", "arguments": new_args }),
+                )
             }
             "compare_checkpoint" => {
                 let mut new_args = args.clone();
                 if new_args.get("action").is_none() {
                     new_args["action"] = json!("compare_checkpoint");
                 }
-                self.tool_call(id, &json!({ "name": "cortex_chronos", "arguments": new_args }))
+                self.tool_call(
+                    id,
+                    &json!({ "name": "cortex_chronos", "arguments": new_args }),
+                )
             }
 
             // Deprecated (kept for now): skeleton reader
@@ -703,19 +750,29 @@ Tip: use cortex_chronos(action=list_checkpoints) first to see what exists.".to_s
 
         let limit = query_limit.unwrap_or_else(|| {
             let budget_based = (budget_tokens / 1_500).clamp(8, 60);
-            budget_based.min(cfg.vector_search.default_query_limit).max(1)
+            budget_based
+                .min(cfg.vector_search.default_query_limit)
+                .max(1)
         });
         let max_candidates = (limit * 12).clamp(80, 400);
-        let terms: Vec<String> = query.split_whitespace()
+        let terms: Vec<String> = query
+            .split_whitespace()
             .map(|s| s.trim().to_ascii_lowercase())
             .filter(|s| s.len() >= 2)
             .collect();
 
-        let mut scored: Vec<(i32, usize)> = entries.iter().enumerate().map(|(i, e)| {
-            let rel = e.rel_path.to_string_lossy().replace('\\', "/");
-            (score_path(&rel, &terms), i)
-        }).collect();
-        scored.sort_by(|(sa, ia), (sb, ib)| sb.cmp(sa).then_with(|| entries[*ia].bytes.cmp(&entries[*ib].bytes)));
+        let mut scored: Vec<(i32, usize)> = entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let rel = e.rel_path.to_string_lossy().replace('\\', "/");
+                (score_path(&rel, &terms), i)
+            })
+            .collect();
+        scored.sort_by(|(sa, ia), (sb, ib)| {
+            sb.cmp(sa)
+                .then_with(|| entries[*ia].bytes.cmp(&entries[*ib].bytes))
+        });
 
         let mut to_index: Vec<(String, PathBuf)> = Vec::new();
         for (_score, idx) in scored.iter().take(max_candidates) {
@@ -726,12 +783,19 @@ Tip: use cortex_chronos(action=list_checkpoints) first to see what exists.".to_s
             }
         }
 
-        let jobs: Vec<IndexJob> = to_index.par_iter().filter_map(|(rel, abs)| {
-            let bytes = std::fs::read(abs).ok()?;
-            let content = String::from_utf8(bytes)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
-            Some(IndexJob { rel_path: rel.clone(), abs_path: abs.clone(), content })
-        }).collect();
+        let jobs: Vec<IndexJob> = to_index
+            .par_iter()
+            .filter_map(|(rel, abs)| {
+                let bytes = std::fs::read(abs).ok()?;
+                let content = String::from_utf8(bytes)
+                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
+                Some(IndexJob {
+                    rel_path: rel.clone(),
+                    abs_path: abs.clone(),
+                    content,
+                })
+            })
+            .collect();
 
         let rt = tokio::runtime::Runtime::new()?;
         let q_owned = query.to_string();
@@ -752,7 +816,11 @@ Tip: use cortex_chronos(action=list_checkpoints) first to see what exists.".to_s
 /// Resolve a path parameter: if absolute, use as-is; otherwise join to repo_root.
 fn resolve_path(repo_root: &PathBuf, p: &str) -> PathBuf {
     let pb = PathBuf::from(p);
-    if pb.is_absolute() { pb } else { repo_root.join(p) }
+    if pb.is_absolute() {
+        pb
+    } else {
+        repo_root.join(p)
+    }
 }
 
 fn score_path(rel_path: &str, terms: &[String]) -> i32 {
@@ -760,8 +828,11 @@ fn score_path(rel_path: &str, terms: &[String]) -> i32 {
     let filename = p.rsplit('/').next().unwrap_or(&p);
     let mut score = 0i32;
     for t in terms {
-        if filename.contains(t.as_str()) { score += 30; }
-        else if p.contains(t.as_str()) { score += 10; }
+        if filename.contains(t.as_str()) {
+            score += 30;
+        } else if p.contains(t.as_str()) {
+            score += 10;
+        }
     }
     score
 }

@@ -56,10 +56,16 @@ fn resolve_path(repo_root: &Path, p: &str) -> PathBuf {
 
 fn normalize_checkpoint_path(repo_root: &Path, abs_path: &Path) -> String {
     // Best-effort canonicalization to reduce mismatch from path variants.
-    let repo_root = repo_root.canonicalize().unwrap_or_else(|_| repo_root.to_path_buf());
-    let abs_path = abs_path.canonicalize().unwrap_or_else(|_| abs_path.to_path_buf());
+    let repo_root = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.to_path_buf());
+    let abs_path = abs_path
+        .canonicalize()
+        .unwrap_or_else(|_| abs_path.to_path_buf());
 
-    let rel = abs_path.strip_prefix(&repo_root).unwrap_or(abs_path.as_path());
+    let rel = abs_path
+        .strip_prefix(&repo_root)
+        .unwrap_or(abs_path.as_path());
     let mut out = rel.to_string_lossy().replace('\\', "/");
     if out.starts_with("./") {
         out = out.trim_start_matches("./").to_string();
@@ -105,7 +111,13 @@ fn guess_code_fence(path: &str) -> &'static str {
     }
 }
 
-pub fn checkpoint_symbol(repo_root: &Path, cfg: &Config, path: &str, symbol_name: &str, tag: &str) -> Result<String> {
+pub fn checkpoint_symbol(
+    repo_root: &Path,
+    cfg: &Config,
+    path: &str,
+    symbol_name: &str,
+    tag: &str,
+) -> Result<String> {
     let tag = tag.trim();
     if tag.is_empty() {
         return Err(anyhow!("Missing semantic tag"));
@@ -120,8 +132,12 @@ pub fn checkpoint_symbol(repo_root: &Path, cfg: &Config, path: &str, symbol_name
     }
 
     let abs = resolve_path(repo_root, path);
-    let code = read_symbol(&abs, symbol_name)
-        .with_context(|| format!("Failed to extract symbol `{symbol_name}` from {}", abs.display()))?;
+    let code = read_symbol(&abs, symbol_name).with_context(|| {
+        format!(
+            "Failed to extract symbol `{symbol_name}` from {}",
+            abs.display()
+        )
+    })?;
 
     let rel_path = normalize_checkpoint_path(repo_root, &abs);
 
@@ -146,8 +162,10 @@ pub fn checkpoint_symbol(repo_root: &Path, cfg: &Config, path: &str, symbol_name
     let tmp_path = final_path.with_extension("json.tmp");
 
     let json_text = serde_json::to_string_pretty(&rec).context("Failed to serialize checkpoint")?;
-    fs::write(&tmp_path, json_text).with_context(|| format!("Failed to write {}", tmp_path.display()))?;
-    fs::rename(&tmp_path, &final_path).with_context(|| format!("Failed to rename checkpoint to {}", final_path.display()))?;
+    fs::write(&tmp_path, json_text)
+        .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
+    fs::rename(&tmp_path, &final_path)
+        .with_context(|| format!("Failed to rename checkpoint to {}", final_path.display()))?;
 
     Ok(format!(
         "Checkpoint saved.\n- tag: `{}`\n- symbol: `{}`\n- path: `{}`\n- file: {}",
@@ -338,7 +356,9 @@ fn find_one<'a>(
     }
 
     match matches.len() {
-        0 => Err(anyhow!("No checkpoint found for symbol `{symbol}` at tag `{tag}`")),
+        0 => Err(anyhow!(
+            "No checkpoint found for symbol `{symbol}` at tag `{tag}`"
+        )),
         1 => Ok(matches[0]),
         _ => {
             let mut msg = format!("Multiple checkpoints match symbol `{symbol}` at tag `{tag}`. Please disambiguate with `path`.\nMatches:\n");
@@ -361,7 +381,10 @@ pub fn compare_symbol(
     let dir = checkpoints_dir(repo_root, cfg);
     let recs = load_all(&dir);
     if recs.is_empty() {
-        return Err(anyhow!("No checkpoints found (directory missing or empty): {}", dir.display()));
+        return Err(anyhow!(
+            "No checkpoints found (directory missing or empty): {}",
+            dir.display()
+        ));
     }
 
     let symbol_name = symbol_name.trim();
@@ -383,8 +406,12 @@ pub fn compare_symbol(
             ));
         };
         let abs = resolve_path(repo_root, p);
-        let code = read_symbol(&abs, symbol_name)
-            .with_context(|| format!("Failed to extract live symbol `{symbol_name}` from {}", abs.display()))?;
+        let code = read_symbol(&abs, symbol_name).with_context(|| {
+            format!(
+                "Failed to extract live symbol `{symbol_name}` from {}",
+                abs.display()
+            )
+        })?;
 
         live_record = CheckpointRecord {
             tag: "__live__".to_string(),
@@ -400,7 +427,10 @@ pub fn compare_symbol(
 
     let fence = guess_code_fence(&rec_a.path);
     let mut out = String::new();
-    out.push_str(&format!("## Comparison: `{}` (`{}` vs `{}`)\n\n", symbol_name, tag_a, tag_b));
+    out.push_str(&format!(
+        "## Comparison: `{}` (`{}` vs `{}`)\n\n",
+        symbol_name, tag_a, tag_b
+    ));
 
     out.push_str(&format!("### `{}` — `{}`\n", tag_a, rec_a.path));
     out.push_str(&format!("```{}\n{}\n```\n\n", fence, rec_a.code.trim_end()));

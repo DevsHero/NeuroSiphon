@@ -105,7 +105,13 @@ fn parse_npm_workspace_members(package_json: &Path) -> Vec<String> {
 /// all matching subdirectory paths that also contain a manifest file.
 fn resolve_workspace_globs(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
     let mut found: HashSet<PathBuf> = HashSet::new();
-    let manifest_names = ["Cargo.toml", "package.json", "pyproject.toml", "setup.py", "go.mod"];
+    let manifest_names = [
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "setup.py",
+        "go.mod",
+    ];
 
     for pat in patterns {
         // Normalise: remove trailing "/**" or "/*" often seen in workspace configs.
@@ -149,7 +155,11 @@ fn member_name(abs_path: &Path) -> String {
     if cargo.exists() {
         if let Ok(text) = std::fs::read_to_string(&cargo) {
             if let Ok(v) = text.parse::<toml::Value>() {
-                if let Some(name) = v.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str()) {
+                if let Some(name) = v
+                    .get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                {
                     return name.to_string();
                 }
             }
@@ -255,7 +265,13 @@ fn scan_for_sub_projects(
             continue;
         }
 
-        let manifest_names = ["Cargo.toml", "package.json", "pyproject.toml", "setup.py", "go.mod"];
+        let manifest_names = [
+            "Cargo.toml",
+            "package.json",
+            "pyproject.toml",
+            "setup.py",
+            "go.mod",
+        ];
         let has_manifest = manifest_names.iter().any(|m| path.join(m).exists());
         if has_manifest {
             // Only add if it's not the root dir itself.
@@ -300,7 +316,10 @@ impl Default for WorkspaceDiscoveryOptions {
 /// 2. Auto-scan for any sub-directory containing a manifest file, up to `opts.max_depth`.
 ///
 /// Include/exclude glob patterns are applied relative to `root`.
-pub fn discover_workspace_members(root: &Path, opts: &WorkspaceDiscoveryOptions) -> Result<Vec<WorkspaceMember>> {
+pub fn discover_workspace_members(
+    root: &Path,
+    opts: &WorkspaceDiscoveryOptions,
+) -> Result<Vec<WorkspaceMember>> {
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut raw: Vec<PathBuf> = Vec::new();
 
@@ -376,7 +395,11 @@ pub fn discover_workspace_members(root: &Path, opts: &WorkspaceDiscoveryOptions)
     }
 
     // Sort by depth first, then alphabetically — shallow services first.
-    members.sort_by(|a, b| a.depth.cmp(&b.depth).then_with(|| a.rel_path.cmp(&b.rel_path)));
+    members.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then_with(|| a.rel_path.cmp(&b.rel_path))
+    });
 
     Ok(members)
 }

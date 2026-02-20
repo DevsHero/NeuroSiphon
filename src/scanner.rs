@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use ignore::WalkBuilder;
 use ignore::overrides::{Override, OverrideBuilder};
+use ignore::WalkBuilder;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -175,11 +175,7 @@ pub fn scan_workspace(opts: &ScanOptions) -> Result<Vec<FileEntry>> {
         .overrides(overrides)
         .filter_entry(move |dent| {
             // Skip excluded directories by name (prevents descending).
-            if dent
-                .file_type()
-                .map(|ft| ft.is_dir())
-                .unwrap_or(false)
-            {
+            if dent.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 if let Some(name) = dent.path().file_name().and_then(|s| s.to_str()) {
                     if excluded_dir_names.contains(name) {
                         return false;
@@ -246,7 +242,11 @@ fn humanize_bytes(bytes: u64) -> String {
     }
 }
 
-fn scan_single_file(repo_root: &Path, abs_path: &Path, max_file_bytes: u64) -> Result<Vec<FileEntry>> {
+fn scan_single_file(
+    repo_root: &Path,
+    abs_path: &Path,
+    max_file_bytes: u64,
+) -> Result<Vec<FileEntry>> {
     // Apply the same default overrides for consistency.
     let ov = repomix_default_overrides(repo_root, &[])?;
 

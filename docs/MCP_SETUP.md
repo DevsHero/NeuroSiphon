@@ -54,11 +54,13 @@ Alternatively, set the `CORTEXAST_ROOT` environment variable (useful for Claude 
 
 > **VS Code Copilot users**: add `--root` to the `args` array in your `settings.json` `github.copilot.chat.mcpServers` entry, pointing to the workspace folder you want CortexAST to target.
 
-Fallback priority when `--root` / `CORTEXAST_ROOT` are omitted (least reliable for VS Code):
+Fallback priority when `--root` / `CORTEXAST_ROOT` are omitted:
 1. Per-call `repoPath` argument (always works)
 2. `workspaceFolders[0].uri` from MCP `initialize` params (VS Code may or may not send this)
-3. `git rev-parse --show-toplevel` from cwd
-4. `cwd` (usually `$HOME` in VS Code — **avoid relying on this**)
+3. `VSCODE_WORKSPACE_FOLDER` env var — VS Code injects this into every child process it spawns; works even when `initialize` params lack workspace info
+4. `VSCODE_CWD` env var — VS Code's original cwd
+5. `git rev-parse --show-toplevel` from cwd
+6. `cwd` (usually `$HOME` in VS Code — **avoid relying on this**)
 
 Restart your MCP client after editing the config.
 

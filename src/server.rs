@@ -897,13 +897,22 @@ pub fn run_stdio_server(startup_root: Option<PathBuf>) -> Result<()> {
     let mut stdout = std::io::stdout();
 
     let mut state = ServerState::default();
-    // Populate init_root from the CLI --root arg first, then fall back to the
-    // CORTEXAST_ROOT env var.  Either takes priority over the MCP initialize
-    // params and over detect_git_root(), so the very first tool call already
-    // targets the correct workspace even when VS Code spawns the process with
-    // $HOME as cwd and does NOT send workspaceFolders in the initialize message.
+    // Populate init_root from the CLI --root arg first, then try a cascade of
+    // environment variables that reveal the true workspace root.
+    //
+    // Priority (first non-empty wins):
+    //   1. --root <PATH> CLI arg (most explicit — set this in your MCP config)
+    //   2. CORTEXAST_ROOT  — user-provided override via env
+    //   3. VSCODE_WORKSPACE_FOLDER — VS Code injects this into every child process
+    //      it spawns; points to the first workspace folder even when cwd=$HOME
+    //   4. VSCODE_CWD — VS Code's original cwd before it changed to $HOME
+    //
+    // All of these run before detect_git_root() / MCP initialize params, so the
+    // very first tool call targets the correct workspace without needing repoPath.
     let env_root = std::env::var("CORTEXAST_ROOT")
         .ok()
+        .or_else(|| std::env::var("VSCODE_WORKSPACE_FOLDER").ok())
+        .or_else(|| std::env::var("VSCODE_CWD").ok())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);

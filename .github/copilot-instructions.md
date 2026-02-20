@@ -65,7 +65,7 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
 - Always pass `repoPath` explicitly on every tool call (e.g. `repoPath="/Users/me/project"`). Without it, the server tries `git rev-parse --show-toplevel` → `initialize` workspace root → `cwd`, but VS Code may spawn the MCP server with `$HOME` as cwd, causing all path resolution to fail silently.
 - Use the absolute workspace root path, not a subdirectory.
 - **Server owners**: configure `--root /absolute/path/to/project` in your MCP server args (or set `CORTEXAST_ROOT` env var). This is the most reliable fix — it sets the default root at server startup so every tool call resolves correctly even without an explicit `repoPath`. Example VS Code `settings.json`: `"args": ["mcp", "--root", "/Users/me/my-project"]`.
-- Fallback order when `--root`/`CORTEXAST_ROOT` are not configured: `repoPath` param → cached → `workspaceFolders` from MCP `initialize` → `git rev-parse` → `cwd` (`$HOME` — **always wrong in VS Code**).
+- Fallback order when `--root`/`CORTEXAST_ROOT` are not configured: `repoPath` param → cached → `workspaceFolders` from MCP `initialize` → `VSCODE_WORKSPACE_FOLDER` env var → `VSCODE_CWD` env var → `git rev-parse` → `cwd` (`$HOME` — **always wrong in VS Code**).
 
 **Propagation best practice (Hybrid Omni‑Match):**
 - `propagation_checklist` automatically matches common casing variants of `symbol_name` (PascalCase / camelCase / snake_case).

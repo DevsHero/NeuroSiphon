@@ -17,10 +17,14 @@ use rayon::prelude::*;
 
 #[derive(Default)]
 pub struct ServerState {
+    /// Canonical workspace root. Populated from (highest priority first):
+    ///   1. `repoPath` field in a tool call — per-call override.
+    ///   2. MCP `initialize` params (`rootUri` / `rootPath` / `workspaceFolders`).
+    ///   3. CLI `--root` / `CORTEXAST_ROOT` env var — startup bootstrap.
+    ///   4. IDE-specific env vars (VSCODE_WORKSPACE_FOLDER, IDEA_INITIAL_DIRECTORY, …).
+    ///   5. `git rev-parse --show-toplevel` subprocess.
+    ///   6. `cwd` — last resort; refused if it equals $HOME or OS root.
     repo_root: Option<PathBuf>,
-    /// Root captured from the MCP `initialize` request (rootUri / workspaceFolders).
-    /// Populated once and used as a fallback so tools work without explicit `repoPath`.
-    init_root: Option<PathBuf>,
 }
 
 /// Walk up the directory tree from `start` looking for a `.git` dir or a
@@ -74,11 +78,15 @@ fn detect_git_root() -> Option<PathBuf> {
 }
 
 impl ServerState {
-    /// Called once when the MCP `initialize` message is received.
-    /// Extracts the workspace root from standard MCP/LSP fields so subsequent
-    /// tool calls without `repoPath` resolve correctly inside VS Code.
+    /// Called once when the MCP `initialize` request is received.
+    /// Extracts the workspace root from standard LSP/MCP protocol fields and
+    /// writes it directly into `self.repo_root` — making the protocol signal
+    /// the definitive canonical root. This is the only approach that works
+    /// reliably across VS Code, Cursor, JetBrains, Zed, Neovim, and any other
+    /// editor that correctly implements the MCP/LSP initialize spec.
     fn capture_init_root(&mut self, params: &serde_json::Value) {
-        // VS Code Copilot MCP sends workspaceFolders or rootUri in initialize params.
+        // Priority: workspaceFolders[0].uri → rootUri → rootPath
+        // All three are standard MCP/LSP fields; strip file:// prefix and trailing slash.
         let root = params
             .get("workspaceFolders")
             .and_then(|f| f.as_array())
@@ -94,22 +102,27 @@ impl ServerState {
             .map(|s| s.trim_start_matches("file://").trim_end_matches('/').to_string())
             .filter(|s| !s.is_empty())
             .map(PathBuf::from);
-        if root.is_some() {
-            self.init_root = root;
+
+        // The protocol root is authoritative — overwrite any earlier bootstrap
+        // value (env vars / --root) so the editor's own answer always wins.
+        if let Some(r) = root {
+            self.repo_root = Some(r);
         }
     }
 
     fn repo_root_from_params(&mut self, params: &serde_json::Value) -> Result<PathBuf, String> {
-        // ── Step 1: standard priority chain ─────────────────────────────────
+        // ── Step 1: priority chain ────────────────────────────────────────────
+        // 1. Explicit repoPath in this tool call   — per-call override
+        // 2. self.repo_root (set by MCP initialize or a prior successful call)
+        // 3. Git root subprocess                  — last-resort discovery
+        // 4. cwd fallback                         — refused if dead root
         let repo_root = params
             .get("repoPath")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from)
-            // Cached from a prior call in this session
+            // Set by MCP initialize (protocol-level, authoritative) or prior call cache
             .or_else(|| self.repo_root.clone())
-            // Captured at startup (--root / env vars / MCP initialize)
-            .or_else(|| self.init_root.clone())
             // Git root detection via subprocess
             .or_else(|| detect_git_root())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -980,24 +993,19 @@ pub fn run_stdio_server(startup_root: Option<PathBuf>) -> Result<()> {
     let mut stdout = std::io::stdout();
 
     let mut state = ServerState::default();
-    // Populate init_root from the CLI --root arg first, then try a cascade of
-    // environment variables — ordered from most specific to most generic —
-    // to detect the true workspace root across all IDEs without explicit config.
+    // ── Bootstrap repo_root before the first tool call arrives ──────────────
+    // Priority (first non-None wins; the MCP initialize handler may overwrite
+    // this later with the editor's authoritative root):
     //
-    // Omni-Env priority (first non-empty wins):
-    //   1. --root <PATH>            — explicit CLI flag (MCP config "args")
-    //   2. CORTEXAST_ROOT           — user-defined override
-    //   3. VSCODE_WORKSPACE_FOLDER  — VS Code / Cursor / Windsurf
-    //   4. VSCODE_CWD               — VS Code secondary
-    //   5. IDEA_INITIAL_DIRECTORY   — JetBrains (IntelliJ, GoLand, WebStorm…)
-    //   6. PWD                      — POSIX login shell / Zed / Neovim terminals
-    //   7. INIT_CWD                 — npm/yarn scripts; sometimes set by Node runners
+    //   1. --root <PATH>  / CORTEXAST_ROOT     — explicit config (always wins)
+    //   2. VSCODE_WORKSPACE_FOLDER             — VS Code / Cursor / Windsurf
+    //   3. VSCODE_CWD                          — VS Code secondary
+    //   4. IDEA_INITIAL_DIRECTORY              — JetBrains IDEs
+    //   5. PWD / INIT_CWD (≠ $HOME)            — Zed, Neovim, npm runners
     //
-    // Notes:
-    //   • PWD and INIT_CWD are only used when they differ from $HOME — if they
-    //     equal $HOME the IDE spawned badly and they are worthless.
-    //   • All of these are checked before detect_git_root() and the MCP
-    //     initialize params, giving zero-config operation on every major editor.
+    // This is a best-effort bootstrap only. The MCP `initialize` request
+    // (capture_init_root) is the canonical, protocol-level source and will
+    // overwrite this value when the editor sends it.
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
     let env_root = std::env::var("CORTEXAST_ROOT").ok()
         .or_else(|| std::env::var("VSCODE_WORKSPACE_FOLDER").ok())
@@ -1009,7 +1017,7 @@ pub fn run_stdio_server(startup_root: Option<PathBuf>) -> Result<()> {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);
     if let Some(r) = startup_root.or(env_root) {
-        state.init_root = Some(r);
+        state.repo_root = Some(r);
     }
 
     for line in stdin.lock().lines() {

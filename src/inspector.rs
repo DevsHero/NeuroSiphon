@@ -1909,11 +1909,24 @@ pub fn read_symbol(path: &Path, symbol_name: &str) -> Result<String> {
             .map(|(n, k, _, _)| format!("  {k} {n}"))
             .collect();
         available.sort();
+        const MAX_AVAILABLE: usize = 30;
+        let total = available.len();
+        let shown = total.min(MAX_AVAILABLE);
+        let mut rendered = available.into_iter().take(shown).collect::<Vec<_>>();
+        if total > MAX_AVAILABLE {
+            rendered.push(format!(
+                "... (and {} more symbols not shown. Use 'map_repo' to see all)",
+                total - MAX_AVAILABLE
+            ));
+        }
         return Err(anyhow!(
-            "Symbol `{}` not found in {}.\nAvailable symbols:\n{}",
+            "Symbol `{}` not found in {}.\nAvailable symbols (showing {} of {}):\n{}\n\n💡 **Hint:** If you are sure '{}' exists, it might be in a different file. Use the 'find_usages' or 'map_repo' tool to search the entire workspace.",
             symbol_name,
             abs.display(),
-            available.join("\n")
+            shown,
+            total,
+            rendered.join("\n"),
+            symbol_name
         ));
     };
 

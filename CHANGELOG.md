@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.0.0] — Megatool API
+
+### Breaking Changes (with shims)
+- **10 standalone MCP tools consolidated into 4 Megatools** using `action` enum routing.
+  Old tool names are still accepted as compatibility shims via the router but are deprecated.
+  All new integrations should use the new API.
+
+  | Old Tool Name | New API |
+  |---|---|
+  | `map_repo` | `cortex_code_explorer` + `action: map_overview` |
+  | `get_context_slice` | `cortex_code_explorer` + `action: deep_slice` |
+  | `read_symbol` | `cortex_symbol_analyzer` + `action: read_source` |
+  | `find_usages` | `cortex_symbol_analyzer` + `action: find_usages` |
+  | `call_hierarchy` | `cortex_symbol_analyzer` + `action: blast_radius` |
+  | `propagation_checklist` | `cortex_symbol_analyzer` + `action: propagation_checklist` |
+  | `save_checkpoint` | `cortex_chronos` + `action: save_checkpoint` |
+  | `list_checkpoints` | `cortex_chronos` + `action: list_checkpoints` |
+  | `compare_checkpoint` | `cortex_chronos` + `action: compare_checkpoint` |
+  | `run_diagnostics` | `run_diagnostics` (unchanged) |
+
+### Added
+- **Production-quality tool descriptions** — all 4 megatools now carry Anthropic-best-practice-compliant descriptions with:
+  - DECISION GUIDE blocks mapping user intent → action choice
+  - Per-action trigger phrases (when to use, when NOT to use)
+  - Required vs optional param callouts inline in enum descriptions
+  - Negative anchors ("NEVER use grep/rg when this tool is available")
+  - Aim for 5–8 sentences per tool, following Anthropic guideline of ≥3–4 sentences for complex tools
+- **`USE_CASES.md`** — Agentic Workflow Playbook with 3 killer use cases, Mermaid flowcharts, and agent execution logs
+- **README.md Agentic Workflow Playbook section** — links to USE_CASES.md
+- **`.cortexast/` added to `.gitignore`** — prevents Chronos snapshot files from being committed
+
+### Changed
+- **Recommended agent rules updated** across all 5 client templates (VS Code, Cursor, Windsurf, Cline, Claude Desktop) to reference new megatool + action syntax
+- **MCP Tool Reference in README.md** rewritten for megatool API with per-action parameter documentation
+
+---
+
 ## [1.5.0] — 2026-02-20
 
 ### Added

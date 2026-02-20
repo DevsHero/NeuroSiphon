@@ -1,11 +1,20 @@
 ## MCP Tool Usage Rules (CortexAST + Shadowcrawl)
 
 ### CortexAST Priority Rules
-- ALWAYS use `find_usages` instead of grep/semantic_search for symbol lookups
-- ALWAYS call `save_checkpoint` before any non-trivial refactor
-- ALWAYS call `propagation_checklist` before changing a shared type/struct
-- Use `get_context_slice` with a `query` for multi-file overviews (output may spill to file — read it)
-- Use `call_hierarchy` to measure blast radius before renaming/moving any function
+
+> **Megatool API (v1.5+):** Old tool names (`map_repo`, `read_symbol`, `find_usages`, `call_hierarchy`,
+> `get_context_slice`, `save_checkpoint`, `list_checkpoints`, `compare_checkpoint`,
+> `propagation_checklist`) are still accepted as compatibility shims but are deprecated.
+> Always use the megatool API below.
+
+- 🔍 **Explore repos/files** → `cortex_code_explorer` with `action: map_overview` (structure) or `action: deep_slice` (content). NEVER use ls/tree/find/cat.
+- 🎯 **Look up a symbol** → `cortex_symbol_analyzer` with `action: read_source`. NEVER use grep/rg.
+- 🎯 **Find all usages** → `cortex_symbol_analyzer` with `action: find_usages` before changing any symbol signature.
+- 🎯 **Measure blast radius** → `cortex_symbol_analyzer` with `action: blast_radius` BEFORE any rename, move, or delete.
+- 🎯 **Cross-boundary propagation** → `cortex_symbol_analyzer` with `action: propagation_checklist` before changing a shared type/struct/interface.
+- ⏳ **Save a snapshot** → `cortex_chronos` with `action: save_checkpoint` BEFORE any non-trivial refactor.
+- ⏳ **Verify a refactor** → `cortex_chronos` with `action: compare_checkpoint` AFTER editing (NEVER use git diff for this).
+- 🚨 **Check for errors** → `run_diagnostics` immediately after any code edit.
 
 # MCP Usage Guidelines — ShadowCrawl
 

@@ -23,65 +23,65 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 | Task | ❌ Standard (For Humans) | 🧠 CortexAST (For AI) | Result |
 |:---|:---|:---|:---|
-| **Exploration** | `tree` / `ls` — filenames only | `map_repo` — files + public symbols inside | Instant architecture map |
-| **Reading Code** | `cat` — 2 000-line dump | `read_symbol` — exact AST node only | Nuclear token savings |
-| **Finding Stuff** | `grep` — string matches incl. comments | `find_usages` — AST-accurate, zero false positives | Calls / Type Refs / Fields |
-| **Refactoring** | `git diff` — line & whitespace noise | `save_checkpoint` + `compare_checkpoint` | Crystal-clear semantic diff |
-| **Cross-Service** | Manual file-by-file search | `propagation_checklist` — Proto → Rust → TS | Prevents missing propagation |
-| **Blast Radius** | Guessing | `call_hierarchy` — Incoming + Outgoing callers | Safe rename / delete |
+| **Exploration** | `tree` / `ls` — filenames only | `cortex_code_explorer(map_overview)` — files + public symbols inside | Instant architecture map |
+| **Reading Code** | `cat` — 2 000-line dump | `cortex_symbol_analyzer(read_source)` — exact AST node only | Nuclear token savings |
+| **Finding Stuff** | `grep` — string matches incl. comments | `cortex_symbol_analyzer(find_usages)` — AST-accurate, zero false positives | Calls / Type Refs / Fields |
+| **Refactoring** | `git diff` — line & whitespace noise | `cortex_chronos(save_checkpoint)` + `cortex_chronos(compare_checkpoint)` | Crystal-clear semantic diff |
+| **Cross-Service** | Manual file-by-file search | `cortex_symbol_analyzer(propagation_checklist)` — Proto → Rust → TS | Prevents missing propagation |
+| **Blast Radius** | Guessing | `cortex_symbol_analyzer(blast_radius)` — Incoming + Outgoing callers | Safe rename / delete |
 
 ---
 
-## 🛠️ MCP Tool Reference (v1.5.0)
+## 🛠️ MCP Tool Reference (v1.5.0 — Megatool API)
 
-### 🗺️ `map_repo` — God's Eye
-Returns a hierarchical codebase map showing files and their exported symbols.
+> **Megatool API:** 10 standalone tools consolidated into 4 megatools with `action` enum routing. Old tool names are accepted as compatibility shims but deprecated. Use the new API below.
 
-- `search_filter` — case-insensitive substring, **OR via `|`** (e.g. `"auth|user"`); matches file paths and, for repos ≤ 300 files, symbol names too
+### 🔍 `cortex_code_explorer` — Code Explorer Megatool
+🔥 Always use instead of ls/tree/find/cat. Two modes via `action`:
+
+**`action: map_overview`** — Bird's-eye repo map (files + public symbols). Use first on any unfamiliar codebase.
+- `target_dir` (**required**) — directory to map (use `'.'` for whole repo)
+- `search_filter` — case-insensitive substring, **OR via `|`** (e.g. `"auth|user"`)
 - `ignore_gitignore` — set `true` to include generated / git-ignored files
-- `max_chars` — output cap (default 8 000 chars)
-- Built-in guardrails: did-you-mean path recovery, regex-input warning, overflow diagnostics
+- `max_chars` — output cap (hard cap 8 000 chars)
 
-### ⚡ `read_symbol` — X-Ray Extractor
-Extracts the exact, full source of any symbol (function, struct, class, const) via AST.
-
-- `symbol_names: ["A","B","C"]` — batch mode, multiple symbols in one call
-- "Symbol not found" error: lists up to 30 available symbols + recovery hint pointing to `find_usages` / `map_repo`
-
-### 🎯 `find_usages` — Semantic Tracer
-**Always use instead of `grep` / `rg`.** 100 % accurate AST usages across the workspace, zero false positives from comments or strings. Categorises hits:
-- **Calls** — function / method invocations
-- **TypeRefs** — type annotations, generics
-- **FieldInits** — struct field assignments
-
-### 🕸️ `call_hierarchy` — Blast Radius Analyser
-**Use before any function rename, move, or delete.** Shows who calls the function (Incoming) and what the function calls (Outgoing).
-
-### 📦 `get_context_slice` — Deep Dive Slicer
-Token-budget-aware XML slice of a directory or file. Skeletonises all source (bodies pruned, imports collapsed).
-
+**`action: deep_slice`** — Token-budget-aware XML slice of a file or directory. Skeletonises all source (bodies pruned, imports collapsed).
+- `target` (**required**) — relative path to file or directory
 - `query` — optional semantic vector search; ranks files by relevance first
-- **Inline / spill**: output ≤ 8 KB returned inline; larger output written to `/tmp/cortexast_slice_{hash}.xml` — use `read_file` to access it
+- `budget_tokens` — token budget (default 32 000)
+- **Inline / spill**: output ≤ 8 KB returned inline; larger output written to temp file — use `read_file` to access it
+
+### 🎯 `cortex_symbol_analyzer` — Symbol Analysis Megatool
+🔥 Always use instead of grep/rg/ag. Four modes via `action`:
+
+**`action: read_source`** — Extracts the exact, full source of any symbol (function, struct, class, const) via AST.
+- `path` (**required**) — source file containing the symbol
+- `symbol_name` (**required**) — target symbol name
+- `symbol_names: ["A","B","C"]` — batch mode: multiple symbols in one call
+
+**`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldInits**.
+- `symbol_name` + `target_dir` (**required**)
+
+**`action: blast_radius`** — Shows who calls the function (Incoming) and what the function calls (Outgoing). **Use before any rename, move, or delete.**
+- `symbol_name` + `target_dir` (**required**)
+
+**`action: propagation_checklist`** — Strict Markdown checklist grouped by language/domain (Proto → Rust → TS → Python). **Use before changing any shared type, interface, or API contract.**
+- `symbol_name` (**required**); `changed_path` for legacy contract-file mode
+- `ignore_gitignore: true` — includes generated stubs (gRPC, Protobuf, etc.)
+
+### ⏳ `cortex_chronos` — Snapshot Megatool (AST Time Machine)
+⚖️ **NEVER use `git diff` for AI refactors.** Three modes via `action`:
+
+**`action: save_checkpoint`** — Snapshots a symbol's AST under a semantic tag (e.g. `pre-refactor`). **Call before any non-trivial edit.**
+- `path` + `symbol_name` + `semantic_tag` (**required**)
+
+**`action: list_checkpoints`** — Lists all saved snapshots grouped by tag.
+
+**`action: compare_checkpoint`** — Structural diff between two snapshots; ignores whitespace and line-number noise.
+- `symbol_name` + `tag_a` + `tag_b` (**required**)
 
 ### 🚨 `run_diagnostics` — Compiler Whisperer
-Auto-detects project type (`cargo check` / `tsc --noEmit`), runs the compiler, maps errors directly to AST source lines.
-
-### ⏳ Chronos — AST Time Machine
-Save structural snapshots before edits and compare semantics after — without whitespace or line-number noise.
-
-- `save_checkpoint` — **Use before any non-trivial edit or refactor.** Snapshots a symbol's AST to disk with a semantic tag (e.g. `pre-refactor`)
-- `list_checkpoints` — shows all saved snapshots grouped by tag
-- `compare_checkpoint` — structural diff between two snapshots; ignores whitespace and line-number noise
-
-### 🎯 `propagation_checklist` — Cross-Boundary Safety Net
-**Use before changing any shared type, struct, interface, or API contract.**  
-Generates a strict Markdown checklist grouped by language / domain (Proto → Rust → TS → Python → Other).
-
-- `symbol_name` — AST-traces the symbol across the entire workspace
-- `ignore_gitignore: true` — includes generated stubs (gRPC, Protobuf, etc.)
-- Line numbers per file (up to 5 shown, `…` suffix if more)
-- Hard cap: 50 files, 8 000 chars; BLAST RADIUS WARNING if exceeded
-- `changed_path` — legacy file-based mode (still supported)
+Auto-detects project type (`cargo check` / `tsc --noEmit`), runs the compiler, maps errors directly to AST source lines. **Run immediately after any code edit.**
 
 
 ---
@@ -161,15 +161,16 @@ To maximise CortexAST's effectiveness, add the rules below to your AI assistant'
 **File:** `.github/copilot-instructions.md`
 
 ```markdown
-## CortexAST Priority Rules
+## CortexAST Priority Rules (Megatool API v1.5+)
 
-- ALWAYS use `map_repo` instead of ls/tree/find
-- ALWAYS use `read_symbol` instead of cat/head/any file read
-- ALWAYS use `find_usages` instead of grep/rg/ag/semantic_search
-- ALWAYS call `save_checkpoint` before any non-trivial edit or refactor
-- ALWAYS call `propagation_checklist` before changing a shared type, struct, or interface
-- Use `get_context_slice` with a `query` for multi-file overviews (output may spill to file — read it)
-- Use `call_hierarchy` to measure blast radius before renaming, moving, or deleting any function
+- 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
+- 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
+- 🎯 Find all usages → `cortex_symbol_analyzer(action: find_usages)` before changing any symbol signature.
+- 🎯 Measure blast radius → `cortex_symbol_analyzer(action: blast_radius)` BEFORE any rename, move, or delete.
+- 🎯 Cross-boundary propagation → `cortex_symbol_analyzer(action: propagation_checklist)` before changing a shared type/struct/interface.
+- ⏳ Save a snapshot → `cortex_chronos(action: save_checkpoint)` BEFORE any non-trivial refactor.
+- ⏳ Verify a refactor → `cortex_chronos(action: compare_checkpoint)` AFTER editing (NEVER use git diff for this).
+- 🚨 Check for errors → `run_diagnostics` immediately after any code edit.
 ```
 
 ### Cursor
@@ -183,15 +184,16 @@ globs: ["**/*"]
 alwaysApply: true
 ---
 
-## CortexAST Priority Rules
+## CortexAST Priority Rules (Megatool API v1.5+)
 
-- ALWAYS use `map_repo` instead of ls/tree/find
-- ALWAYS use `read_symbol` instead of cat/head/any file read
-- ALWAYS use `find_usages` instead of grep/rg/ag
-- ALWAYS call `save_checkpoint` before any non-trivial edit or refactor
-- ALWAYS call `propagation_checklist` before changing a shared type, struct, or interface
-- Use `get_context_slice` with a `query` for multi-file overviews (output may spill to file — read it)
-- Use `call_hierarchy` to measure blast radius before renaming, moving, or deleting any function
+- 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
+- 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
+- 🎯 Find all usages → `cortex_symbol_analyzer(action: find_usages)` before changing any symbol signature.
+- 🎯 Measure blast radius → `cortex_symbol_analyzer(action: blast_radius)` BEFORE any rename, move, or delete.
+- 🎯 Cross-boundary propagation → `cortex_symbol_analyzer(action: propagation_checklist)` before changing a shared type/struct/interface.
+- ⏳ Save a snapshot → `cortex_chronos(action: save_checkpoint)` BEFORE any non-trivial refactor.
+- ⏳ Verify a refactor → `cortex_chronos(action: compare_checkpoint)` AFTER editing (NEVER use git diff for this).
+- 🚨 Check for errors → `run_diagnostics` immediately after any code edit.
 ```
 
 ### Windsurf
@@ -199,15 +201,16 @@ alwaysApply: true
 **File:** `.windsurfrules`
 
 ```markdown
-## CortexAST Priority Rules
+## CortexAST Priority Rules (Megatool API v1.5+)
 
-- ALWAYS use `map_repo` instead of ls/tree/find
-- ALWAYS use `read_symbol` instead of cat/head/any file read
-- ALWAYS use `find_usages` instead of grep/rg/ag
-- ALWAYS call `save_checkpoint` before any non-trivial edit or refactor
-- ALWAYS call `propagation_checklist` before changing a shared type, struct, or interface
-- Use `get_context_slice` with a `query` for multi-file overviews (output may spill to file — read it)
-- Use `call_hierarchy` to measure blast radius before renaming, moving, or deleting any function
+- 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
+- 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
+- 🎯 Find all usages → `cortex_symbol_analyzer(action: find_usages)` before changing any symbol signature.
+- 🎯 Measure blast radius → `cortex_symbol_analyzer(action: blast_radius)` BEFORE any rename, move, or delete.
+- 🎯 Cross-boundary propagation → `cortex_symbol_analyzer(action: propagation_checklist)` before changing a shared type/struct/interface.
+- ⏳ Save a snapshot → `cortex_chronos(action: save_checkpoint)` BEFORE any non-trivial refactor.
+- ⏳ Verify a refactor → `cortex_chronos(action: compare_checkpoint)` AFTER editing (NEVER use git diff for this).
+- 🚨 Check for errors → `run_diagnostics` immediately after any code edit.
 ```
 
 ### Cline / Claude Dev
@@ -215,15 +218,16 @@ alwaysApply: true
 **File:** `.clinerules`
 
 ```markdown
-## CortexAST Priority Rules
+## CortexAST Priority Rules (Megatool API v1.5+)
 
-- ALWAYS use `map_repo` instead of ls/tree/find
-- ALWAYS use `read_symbol` instead of cat/head/any file read
-- ALWAYS use `find_usages` instead of grep/rg/ag
-- ALWAYS call `save_checkpoint` before any non-trivial edit or refactor
-- ALWAYS call `propagation_checklist` before changing a shared type, struct, or interface
-- Use `get_context_slice` with a `query` for multi-file overviews (output may spill to file — read it)
-- Use `call_hierarchy` to measure blast radius before renaming, moving, or deleting any function
+- 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
+- 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
+- 🎯 Find all usages → `cortex_symbol_analyzer(action: find_usages)` before changing any symbol signature.
+- 🎯 Measure blast radius → `cortex_symbol_analyzer(action: blast_radius)` BEFORE any rename, move, or delete.
+- 🎯 Cross-boundary propagation → `cortex_symbol_analyzer(action: propagation_checklist)` before changing a shared type/struct/interface.
+- ⏳ Save a snapshot → `cortex_chronos(action: save_checkpoint)` BEFORE any non-trivial refactor.
+- ⏳ Verify a refactor → `cortex_chronos(action: compare_checkpoint)` AFTER editing (NEVER use git diff for this).
+- 🚨 Check for errors → `run_diagnostics` immediately after any code edit.
 ```
 
 ### Claude Desktop
@@ -231,14 +235,15 @@ alwaysApply: true
 Add to `claude_desktop_config.json` → `systemPrompt`:
 
 ```
-CortexAST Priority Rules:
-- ALWAYS use map_repo instead of ls/tree/find
-- ALWAYS use read_symbol instead of cat/head/any file read
-- ALWAYS use find_usages instead of grep/rg/ag
-- ALWAYS call save_checkpoint before any non-trivial edit or refactor
-- ALWAYS call propagation_checklist before changing a shared type, struct, or interface
-- Use get_context_slice with a query for multi-file overviews (output may spill to file — read it)
-- Use call_hierarchy to measure blast radius before renaming, moving, or deleting any function
+CortexAST Priority Rules (Megatool API v1.5+):
+- Explore repos/files → cortex_code_explorer with action: map_overview (structure) or action: deep_slice (content). NEVER use ls/tree/find/cat.
+- Look up a symbol → cortex_symbol_analyzer with action: read_source. NEVER use grep/rg.
+- Find all usages → cortex_symbol_analyzer with action: find_usages before changing any symbol signature.
+- Measure blast radius → cortex_symbol_analyzer with action: blast_radius BEFORE any rename, move, or delete.
+- Cross-boundary propagation → cortex_symbol_analyzer with action: propagation_checklist before changing a shared type/struct.
+- Save a snapshot → cortex_chronos with action: save_checkpoint BEFORE any non-trivial refactor.
+- Verify a refactor → cortex_chronos with action: compare_checkpoint AFTER editing (NEVER use git diff for this).
+- Check for errors → run_diagnostics immediately after any code edit.
 ```
 
 ---

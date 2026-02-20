@@ -51,8 +51,8 @@ fn mcp_stdio_smoke() {
                 "id": 3,
                 "method": "tools/call",
                 "params": {
-                    "name": "map_repo",
-                    "arguments": { "repoPath": repo_root, "target_dir": "." }
+                    "name": "cortex_code_explorer",
+                    "arguments": { "repoPath": repo_root, "action": "map_overview", "target_dir": "." }
                 }
             })
         )
@@ -66,8 +66,8 @@ fn mcp_stdio_smoke() {
                 "id": 4,
                 "method": "tools/call",
                 "params": {
-                    "name": "read_symbol",
-                    "arguments": { "repoPath": repo_root, "path": "src/inspector.rs", "symbol_name": "LanguageDriver" }
+                    "name": "cortex_symbol_analyzer",
+                    "arguments": { "repoPath": repo_root, "action": "read_source", "path": "src/inspector.rs", "symbol_name": "LanguageDriver" }
                 }
             })
         )
@@ -121,7 +121,12 @@ fn mcp_stdio_smoke() {
             .iter()
             .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
             .collect();
-        for required in ["get_context_slice", "map_repo", "read_symbol", "find_usages", "run_diagnostics"] {
+        for required in [
+            "cortex_code_explorer",
+            "cortex_symbol_analyzer",
+            "cortex_chronos",
+            "run_diagnostics",
+        ] {
             assert!(names.contains(required), "missing tool: {required}");
         }
     }

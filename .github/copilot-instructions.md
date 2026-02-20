@@ -70,10 +70,9 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
   1. `repoPath` param in the tool call — per-call override
   2. Root from the MCP `initialize` request (`rootUri` / `rootPath` / `workspaceFolders[0].uri`) — **the authoritative protocol-level value**; overwrites the bootstrap
   3. `--root` CLI flag / `CORTEXAST_ROOT` env var — startup bootstrap
-  4. IDE env vars: `VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` (if ≠ `$HOME`) — pre-initialize fallback
-  5. `git rev-parse --show-toplevel` subprocess
-  6. Dynamic recovery from tool arg hint (`path` / `target_dir` / `target`)
-  7. `cwd` — **refused if it equals `$HOME` or OS root** (CRITICAL error)
+  4. IDE env vars: `VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` (if ≠ `$HOME`) — checked both at startup AND directly inside every tool call (belt-and-suspenders)
+  5. Find-up heuristic on the tool's own `path` / `target_dir` / `target` argument — walks ancestors looking for `.git`, `Cargo.toml`, `package.json`
+  6. `cwd` — **refused if it equals `$HOME` or OS root** (CRITICAL error)
 
 **Propagation best practice (Hybrid Omni‑Match):**
 - `propagation_checklist` automatically matches common casing variants of `symbol_name` (PascalCase / camelCase / snake_case).

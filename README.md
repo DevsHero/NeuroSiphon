@@ -103,10 +103,9 @@ Full resolution order (first non-dead value wins):
 1. `repoPath` param in the tool call — per-call override
 2. **MCP `initialize`** (`rootUri` / `rootPath` / `workspaceFolders[0].uri`) — protocol-level, canonical
 3. `--root` CLI flag / `CORTEXAST_ROOT` env var — startup bootstrap
-4. IDE env vars: `VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` (if ≠ `$HOME`)
-5. `git rev-parse --show-toplevel` subprocess
-6. Dynamic hinting from the tool's own `path` / `target_dir` / `target` arguments
-7. `cwd` — **refused if it equals `$HOME` or OS root** → returns a **CRITICAL error** the LLM can act on
+4. IDE env vars: `VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` (if ≠ `$HOME`) — checked at startup AND inside every tool call (belt-and-suspenders)
+5. Find-up heuristic on the tool's own `path` / `target_dir` / `target` arg — walks ancestors for `.git`, `Cargo.toml`, `package.json`
+6. `cwd` — **refused if it equals `$HOME` or OS root** → returns a **CRITICAL error** the LLM can act on
 
 ### 🔒 Output safety (`max_chars`)
 All megatools accept an optional `max_chars` (default **8 000**, max **16 000**). The server will **truncate inline** and append an explicit marker when the limit is hit — this prevents VS Code/Cursor-style interception that writes large tool outputs into workspace storage.

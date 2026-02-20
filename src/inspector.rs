@@ -2181,7 +2181,7 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
 /// Walks `target_dir` (honours `.gitignore`) and performs AST-accurate identifier
 /// matching (no comment/string false positives). Output is grouped by domain to
 /// reduce propagation drop across repos/services.
-pub fn propagation_checklist(target_dir: &Path, symbol_name: &str) -> Result<String> {
+pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitignore: bool) -> Result<String> {
     use ignore::WalkBuilder;
     use std::collections::BTreeMap;
 
@@ -2192,12 +2192,13 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str) -> Result<Str
     };
 
     let walker = WalkBuilder::new(&abs_dir)
-        .standard_filters(true)
+        .standard_filters(!ignore_gitignore)
         .hidden(true)
         .build();
 
     let cfg = language_config();
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    // rel_path -> (usage_count, unique_line_numbers_1based)
+    let mut hits_by_file: BTreeMap<String, (usize, Vec<u32>)> = BTreeMap::new();
 
     for entry_result in walker {
         let Ok(entry) = entry_result else { continue };
@@ -2240,31 +2241,45 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str) -> Result<Str
         hits.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
         hits.dedup();
 
+        let usage_count = hits.len();
+        let mut lines_1: Vec<u32> = hits.into_iter().map(|(row0, _cat)| row0 + 1).collect();
+        lines_1.sort_unstable();
+        lines_1.dedup();
+
         let rel = path
             .strip_prefix(&abs_dir)
             .map(|p| p.to_string_lossy().replace('\\', "/"))
             .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
-        *counts.entry(rel).or_insert(0) += hits.len();
+
+        hits_by_file
+            .entry(rel)
+            .and_modify(|(c, ls)| {
+                *c += usage_count;
+                ls.extend(lines_1.iter().copied());
+                ls.sort_unstable();
+                ls.dedup();
+            })
+            .or_insert((usage_count, lines_1));
     }
 
-    let mut proto: Vec<(String, usize)> = Vec::new();
-    let mut rust: Vec<(String, usize)> = Vec::new();
-    let mut ts: Vec<(String, usize)> = Vec::new();
-    let mut py: Vec<(String, usize)> = Vec::new();
-    let mut other: Vec<(String, usize)> = Vec::new();
+    let mut proto: Vec<(String, usize, Vec<u32>)> = Vec::new();
+    let mut rust: Vec<(String, usize, Vec<u32>)> = Vec::new();
+    let mut ts: Vec<(String, usize, Vec<u32>)> = Vec::new();
+    let mut py: Vec<(String, usize, Vec<u32>)> = Vec::new();
+    let mut other: Vec<(String, usize, Vec<u32>)> = Vec::new();
 
-    for (p, n) in counts {
+    for (p, (n, lines)) in hits_by_file {
         let ext = PathBuf::from(&p)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
         match ext.as_str() {
-            "proto" => proto.push((p, n)),
-            "rs" => rust.push((p, n)),
-            "ts" | "tsx" | "js" | "jsx" => ts.push((p, n)),
-            "py" => py.push((p, n)),
-            _ => other.push((p, n)),
+            "proto" => proto.push((p, n, lines)),
+            "rs" => rust.push((p, n, lines)),
+            "ts" | "tsx" | "js" | "jsx" => ts.push((p, n, lines)),
+            "py" => py.push((p, n, lines)),
+            _ => other.push((p, n, lines)),
         }
     }
 
@@ -2272,17 +2287,31 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str) -> Result<Str
     out.push_str(&format!("## 📋 Propagation Checklist for `{}`\n", symbol_name));
     out.push_str("*Review and update these files to ensure cross-service consistency.*\n\n");
 
-    let mut write_section = |title: &str, items: &Vec<(String, usize)>| {
+    let mut write_section = |title: &str, items: &Vec<(String, usize, Vec<u32>)>| {
         if items.is_empty() {
             return;
         }
         out.push_str(&format!("### {}\n", title));
-        for (p, n) in items {
+        for (p, n, lines) in items {
+            let mut line_part = String::new();
+            if !lines.is_empty() {
+                let shown: Vec<String> = lines
+                    .iter()
+                    .take(5)
+                    .map(|l| l.to_string())
+                    .collect();
+                if lines.len() <= 5 {
+                    line_part = format!(" at Lines: {}", shown.join(", "));
+                } else {
+                    line_part = format!(" at Lines: {}, …", shown.join(", "));
+                }
+            }
             out.push_str(&format!(
-                "- [ ] `{}` ({} usage{})\n",
+                "- [ ] `{}` ({} usage{}{})\n",
                 p,
                 n,
                 if *n == 1 { "" } else { "s" }
+                ,line_part
             ));
         }
         out.push('\n');

@@ -164,6 +164,7 @@ impl ServerState {
                                 "repoPath": { "type": "string", "description": "Absolute path to the repo root" },
                                 "symbol_name": { "type": "string", "description": "Symbol to trace across the workspace (exact match). (Tip: Avoid regex or plural words. Use short, core keywords like 'auth' or 'convert' to catch both 'AuthManager' and 'convert_request'.)" },
                                 "target_dir": { "type": "string", "description": "Optional: directory to scan (relative to repoPath). Defaults to '.'" },
+                                "ignore_gitignore": { "type": "boolean", "description": "Optional: bypass .gitignore rules (default false). Useful when generated stubs are git-ignored but must be updated." },
                                 "changed_path": { "type": "string", "description": "(Legacy mode) Path to the changed file (relative to repoPath or absolute)" },
                                 "max_symbols": { "type": "integer", "description": "(Legacy mode) Optional: max extracted symbols to include (default 20)" }
                             },
@@ -396,7 +397,8 @@ Please correct your target_dir (or pass repoPath explicitly).",
                 {
                     let target_str = args.get("target_dir").and_then(|v| v.as_str()).unwrap_or(".");
                     let target_dir = resolve_path(&repo_root, target_str);
-                    match propagation_checklist(&target_dir, sym) {
+                    let ignore_gitignore = args.get("ignore_gitignore").and_then(|v| v.as_bool()).unwrap_or(false);
+                    match propagation_checklist(&target_dir, sym, ignore_gitignore) {
                         Ok(s) => ok(s),
                         Err(e) => err(format!("propagation_checklist failed: {e}")),
                     }

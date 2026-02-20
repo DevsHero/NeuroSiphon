@@ -21,7 +21,7 @@
 | Save pre-change snapshot | `cortex_chronos` | `save_checkpoint` | `path` + `symbol_name` + `semantic_tag` |
 | List snapshots | `cortex_chronos` | `list_checkpoints` | *(none)* |
 | Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` *(use `tag_b="__live__"` + `path` to diff against current state)* |
-| Delete old snapshots (housekeeping) | `cortex_chronos` | `delete_checkpoint` | `symbol_name` and/or `semantic_tag` *(optional: `path`, `namespace`)* — OR `namespace` alone to purge all checkpoints in that namespace |
+| Delete old snapshots (housekeeping) | `cortex_chronos` | `delete_checkpoint` | `symbol_name` and/or `semantic_tag` *(optional: `path`, `namespace`)* — Automatically searches legacy flat `checkpoints/` if no matches in namespace. |
 | Compile/lint diagnostics | `run_diagnostics` | *(none)* | `repoPath` |
 
 ## The Ultimate CortexAST Refactoring SOP
@@ -62,10 +62,18 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
 - Output is truncated server-side at `max_chars` (default **8000**). VS Code Copilot writes responses larger than ~8 KB to workspace storage — the 8000 default is calibrated to stay below that threshold. Set `max_chars` explicitly (e.g. `3000`) for large-scope queries; increase only if your client handles larger inline output.
 
 **`repoPath` best practice:**
-- Always pass `repoPath` explicitly on every tool call (e.g. `repoPath="/Users/me/project"`). Without it, the server tries `git rev-parse --show-toplevel` → `initialize` workspace root → `cwd`, but VS Code may spawn the MCP server with `$HOME` as cwd, causing all path resolution to fail silently.
+- Always pass `repoPath` explicitly on every tool call (e.g. `repoPath="/Users/me/project"`) when you know the path. Without it, the server uses the root established by the MCP `initialize` handshake.
+- **CRITICAL Safeguard:** For safety, if CortexAST resolves to a "dead root" (OS root or Home directory), it returns a **CRITICAL error** instead of proceeding. You MUST catch this and provide the correct `repoPath`.
 - Use the absolute workspace root path, not a subdirectory.
 - **Server owners**: configure `--root /absolute/path/to/project` in your MCP server args (or set `CORTEXAST_ROOT` env var). This is the most reliable fix — it sets the default root at server startup so every tool call resolves correctly even without an explicit `repoPath`. Example VS Code `settings.json`: `"args": ["mcp", "--root", "/Users/me/my-project"]`.
-- Fallback order when `--root`/`CORTEXAST_ROOT` are not configured: `repoPath` param → cached → `workspaceFolders` from MCP `initialize` → `VSCODE_WORKSPACE_FOLDER` env var → `VSCODE_CWD` env var → `IDEA_INITIAL_DIRECTORY` (JetBrains) → `PWD` / `INIT_CWD` (if ≠ `$HOME`) → `git rev-parse` → dynamic recovery from tool arg hint → `cwd` (`$HOME` — **always wrong in VS Code**).
+- **Root resolution order** (first non-dead value wins):
+  1. `repoPath` param in the tool call — per-call override
+  2. Root from the MCP `initialize` request (`rootUri` / `rootPath` / `workspaceFolders[0].uri`) — **the authoritative protocol-level value**; overwrites the bootstrap
+  3. `--root` CLI flag / `CORTEXAST_ROOT` env var — startup bootstrap
+  4. IDE env vars: `VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` (if ≠ `$HOME`) — pre-initialize fallback
+  5. `git rev-parse --show-toplevel` subprocess
+  6. Dynamic recovery from tool arg hint (`path` / `target_dir` / `target`)
+  7. `cwd` — **refused if it equals `$HOME` or OS root** (CRITICAL error)
 
 **Propagation best practice (Hybrid Omni‑Match):**
 - `propagation_checklist` automatically matches common casing variants of `symbol_name` (PascalCase / camelCase / snake_case).

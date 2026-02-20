@@ -43,14 +43,14 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - `target_dir` (**required**) — directory to map (use `'.'` for whole repo)
 - `search_filter` — case-insensitive substring, **OR via `|`** (e.g. `"auth|user"`)
 - `ignore_gitignore` — set `true` to include generated / git-ignored files
-- `max_chars` — optional output cap (default **15 000**, max **30 000**; clamped to prevent IDE interception)
+- `max_chars` — optional output cap (default **8 000**, max **16 000**; clamped to prevent IDE interception)
 
 **`action: deep_slice`** — Token-budget-aware XML slice of a file or directory.
 - `target` (**required**) — relative path to file or directory
 - `query` — optional semantic vector search; ranks files by relevance first
 - `budget_tokens` — token budget (default 32 000)
 - `skeleton_only: true` — enforce structural pruning (skeleton output only) regardless of repo config
-- Output safety: server enforces a strict inline limit via `max_chars` (default 15k, max 30k) and **truncates inline** to avoid editor-side "spill" behaviors
+- Output safety: server enforces a strict inline limit via `max_chars` (default **8 000**, max **16 000**) and **truncates inline** to avoid editor-side "spill" behaviors
 
 ### 🎯 `cortex_symbol_analyzer` — Symbol Analysis Megatool
 🔥 Always use instead of grep/rg/ag. Modes via `action`:
@@ -60,7 +60,7 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - `symbol_name` (**required unless using `symbol_names`**) — target symbol name
 - `symbol_names: ["A","B","C"]` — batch mode: multiple symbols in one call (ignores `symbol_name`)
 - `skeleton_only: true` — return signatures/structure only (drastically reduces tokens when you only need the API)
-- `max_chars` — optional output cap (default 15k, max 30k)
+- `max_chars` — optional output cap (default **8 000**, max **16 000**)
 
 **`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldAccesses** / **FieldInits**.
 - `symbol_name` + `target_dir` (**required**)
@@ -89,13 +89,27 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - Magic: set `tag_b="__live__"` to compare `tag_a` against the current filesystem state (**requires `path`**)
 
 **`action: delete_checkpoint`** — Deletes checkpoint files from the local store (housekeeping).
-- Provide at least one filter: `symbol_name` and/or `semantic_tag` (or `tag`)
+- Provide at least one filter: `symbol_name`, `semantic_tag`, or `path`.
+- **Legacy Fallback:** If a filtered delete finds zero matches in the namespace-specific directory, it automatically searches the legacy flat `checkpoints/` directory to ensure backward compatibility.
+- **Namespace Purge:** Omit all filters to purge an entire namespace. If the namespace doesn't exist, the tool returns a self-teaching error to prevent confusing tags with namespaces.
 
 ### 🚨 `run_diagnostics` — Compiler Whisperer
 Auto-detects project type (`cargo check` / `tsc --noEmit`), runs the compiler, maps errors directly to AST source lines. **Run immediately after any code edit.**
 
+### 🔒 Omni-Root Resolver & OS Safeguards
+CortexAST uses a multi-stage priority chain to resolve the `repo_root`. The **MCP `initialize` request is the authoritative, protocol-level source** — it overwrites any earlier env-var bootstrap and is the only approach that works reliably across all IDEs.
+
+Full resolution order (first non-dead value wins):
+1. `repoPath` param in the tool call — per-call override
+2. **MCP `initialize`** (`rootUri` / `rootPath` / `workspaceFolders[0].uri`) — protocol-level, canonical
+3. `--root` CLI flag / `CORTEXAST_ROOT` env var — startup bootstrap
+4. IDE env vars: `VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` (if ≠ `$HOME`)
+5. `git rev-parse --show-toplevel` subprocess
+6. Dynamic hinting from the tool's own `path` / `target_dir` / `target` arguments
+7. `cwd` — **refused if it equals `$HOME` or OS root** → returns a **CRITICAL error** the LLM can act on
+
 ### 🔒 Output safety (`max_chars`)
-All megatools accept an optional `max_chars` (default **15 000**, max **30 000**). The server will **truncate inline** and append an explicit marker when the limit is hit — this prevents VS Code/Cursor-style interception that writes large tool outputs into workspace storage.
+All megatools accept an optional `max_chars` (default **8 000**, max **16 000**). The server will **truncate inline** and append an explicit marker when the limit is hit — this prevents VS Code/Cursor-style interception that writes large tool outputs into workspace storage.
 
 
 ---

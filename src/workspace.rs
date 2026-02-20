@@ -210,7 +210,7 @@ fn is_heavy_dir(name: &str) -> bool {
             | "__pycache__"
             | ".venv"
             | "venv"
-            | ".neurosiphon"
+            | ".cortextast"
             | ".turbo"
             | ".next"
             | ".nuxt"

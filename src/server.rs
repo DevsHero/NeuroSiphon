@@ -27,26 +27,6 @@ pub struct ServerState {
     repo_root: Option<PathBuf>,
 }
 
-/// Walk up the directory tree from `start` looking for a `.git` dir or a
-/// `.cortexast.json` config file — both are unambiguous project-root markers.
-/// Returns the first ancestor that contains either, or `None`.
-fn find_git_root_from_path(start: &std::path::Path) -> Option<PathBuf> {
-    let mut dir = if start.is_file() {
-        start.parent()?.to_path_buf()
-    } else {
-        start.to_path_buf()
-    };
-    loop {
-        if dir.join(".git").exists() || dir.join(".cortexast.json").exists() {
-            return Some(dir);
-        }
-        match dir.parent() {
-            Some(p) if p != dir => dir = p.to_path_buf(),
-            _ => return None,
-        }
-    }
-}
-
 /// Returns `true` for "useless" roots that indicate the server started with the
 /// wrong cwd (usually $HOME or filesystem root on any OS).
 fn is_dead_root(p: &std::path::Path) -> bool {
@@ -106,18 +86,6 @@ fn extract_path_from_uri(uri: &str) -> Option<PathBuf> {
     if s.is_empty() { None } else { Some(PathBuf::from(s)) }
 }
 
-/// Attempt to find the git repository root from the current working directory.
-/// Spawns `git rev-parse --show-toplevel` — fast, reliable, zero dependencies.
-fn detect_git_root() -> Option<PathBuf> {
-    std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| PathBuf::from(s.trim()))
-}
-
 impl ServerState {
     /// Called once when the MCP `initialize` request is received.
     /// Extracts the workspace root from standard LSP/MCP protocol fields and
@@ -153,68 +121,88 @@ impl ServerState {
     }
 
     fn repo_root_from_params(&mut self, params: &serde_json::Value) -> Result<PathBuf, String> {
-        // ── Step 1: priority chain ────────────────────────────────────────────
-        // 1. Explicit repoPath in this tool call   — per-call override
-        // 2. self.repo_root (set by MCP initialize or a prior successful call)
-        // 3. Git root subprocess                  — last-resort discovery
-        // 4. cwd fallback                         — refused if dead root
-        let repo_root = params
-            .get("repoPath")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .map(PathBuf::from)
-            // Set by MCP initialize (protocol-level, authoritative) or prior call cache
-            .or_else(|| self.repo_root.clone())
-            // Git root detection via subprocess
-            .or_else(|| detect_git_root())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        // ── Step 1: Explicit parameter (highest priority) ─────────────────────
+        if let Some(path) = params.get("repoPath").and_then(|v| v.as_str()) {
+            let pb = PathBuf::from(path);
+            self.repo_root = Some(pb.clone());
+            return Ok(pb);
+        }
 
-        // ── Step 2: Dynamic Git-Root Recovery ────────────────────────────────
-        // If the resolved root is $HOME or filesystem root, the server started
-        // in the wrong cwd.  Try to self-heal using the path hint embedded in
-        // the tool's own arguments ("path", "target_dir", "target").
-        let repo_root = if is_dead_root(&repo_root) {
-            let hint = params.get("path")
-                .or_else(|| params.get("target_dir"))
-                .or_else(|| params.get("target"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty());
+        // ── Step 2: Cached root (from MCP `initialize` or prior successful call)
+        // This covers: --root CLI flag, CORTEXAST_ROOT, any IDE env var captured
+        // at startup, and the MCP initialize protocol root (authoritative).
+        if let Some(root) = &self.repo_root {
+            return Ok(root.clone());
+        }
 
-            if let Some(h) = hint {
-                let abs = if std::path::Path::new(h).is_absolute() {
-                    PathBuf::from(h)
-                } else {
-                    // Relative paths are usually relative to the repo root the
-                    // agent intends — try walking up from cwd first, then $HOME.
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join(h)
-                };
-                find_git_root_from_path(&abs).unwrap_or(repo_root)
+        // ── Step 3: Cross-IDE environment variable cascade ────────────────────
+        // Reached only when self.repo_root wasn't set at startup (e.g. the IDE
+        // didn't export env vars into the MCP subprocess, AND no initialize was
+        // received yet). Belt-and-suspenders: check the vars directly here too.
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_default();
+        // PWD and INIT_CWD must be filtered — they equal $HOME when the IDE
+        // spawns the process in the wrong dir, which is a dead root.
+        let env_root = std::env::var("CORTEXAST_ROOT").ok()
+            .or_else(|| std::env::var("VSCODE_WORKSPACE_FOLDER").ok())
+            .or_else(|| std::env::var("IDEA_INITIAL_DIRECTORY").ok())
+            .or_else(|| std::env::var("INIT_CWD").ok().filter(|v| v.trim() != home.trim()))
+            .or_else(|| std::env::var("PWD").ok().filter(|v| v.trim() != home.trim()))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+        if let Some(pb) = env_root {
+            self.repo_root = Some(pb.clone());
+            return Ok(pb);
+        }
+
+        // ── Step 4: Find-up heuristic on the tool's path hint ─────────────────
+        // Walk the hint's ancestor chain looking for a project root marker
+        // (.git, Cargo.toml, package.json). This recovers cleanly even when the
+        // hint is relative, as long as we can anchor it to an absolute base.
+        let target_hint = params.get("target_dir")
+            .or_else(|| params.get("path"))
+            .or_else(|| params.get("target"))
+            .and_then(|v| v.as_str());
+
+        if let Some(hint) = target_hint {
+            let hint_path = PathBuf::from(hint);
+            let abs = if hint_path.is_absolute() {
+                hint_path
             } else {
-                repo_root
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(hint_path)
+            };
+            let mut current = abs;
+            while let Some(parent) = current.parent() {
+                if parent.join(".git").exists()
+                    || parent.join("Cargo.toml").exists()
+                    || parent.join("package.json").exists()
+                {
+                    let found = parent.to_path_buf();
+                    self.repo_root = Some(found.clone());
+                    return Ok(found);
+                }
+                current = parent.to_path_buf();
             }
-        } else {
-            repo_root
-        };
+        }
 
-        // ── Step 3: Dead-root safeguard ───────────────────────────────────────
-        // After all recovery attempts, if root is still OS root or $HOME,
-        // refuse to proceed — return an actionable CRITICAL error the LLM can
-        // act on immediately by providing 'repoPath' explicitly.
-        if is_dead_root(&repo_root) {
+        // ── Step 5: CRITICAL safeguard — last resort is cwd ──────────────────
+        let fallback = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if is_dead_root(&fallback) {
             return Err(format!(
                 "CRITICAL: Workspace root resolved to '{}' (OS root or Home directory). \
                 This would allow tools to destructively scan the entire filesystem. \
                 Please provide the 'repoPath' parameter pointing to your project directory, \
                 e.g. repoPath='/Users/you/projects/my-app'.",
-                repo_root.display()
+                fallback.display()
             ));
         }
 
-        self.repo_root = Some(repo_root.clone());
-        Ok(repo_root)
+        self.repo_root = Some(fallback.clone());
+        Ok(fallback)
     }
 
     fn tool_list(&self, id: serde_json::Value) -> serde_json::Value {

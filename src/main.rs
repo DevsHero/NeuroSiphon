@@ -14,7 +14,7 @@ use serde_json::json;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "neurosiphon")]
+#[command(name = "cortexast")]
 #[command(version)]
 #[command(about = "High-performance LLM context optimizer (Pure Rust MCP server)")]
 struct Cli {

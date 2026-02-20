@@ -118,7 +118,7 @@ impl IndexStore {
             Ok(store) => store,
             Err(_e) => {
                 crate::debug_log!(
-                    "[neurosiphon] index schema changed or corrupted ({}), rebuilding…",
+                    "[cortexast] index schema changed or corrupted ({}), rebuilding…",
                     _e
                 );
                 Self::default()
@@ -335,7 +335,7 @@ impl CodebaseIndex {
         if let Some(meta) = meta_disk {
             if meta.model_id != model_id || meta.chunk_lines != chunk_lines {
                 crate::debug_log!(
-                    "[neurosiphon] vector index config changed (model/chunk_lines); rebuilding index…"
+                    "[cortexast] vector index config changed (model/chunk_lines); rebuilding index…"
                 );
                 store = IndexStore::default();
                 let _ = std::fs::remove_file(&index_path);

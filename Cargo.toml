@@ -1,6 +1,6 @@
 [package]
 name = "cortexast"
-version = "1.4.1"
+version = "1.5.0"
 edition = "2021"
 description = "God-tier AST intelligence for LLM agents. Pure Rust MCP server with semantic code navigation, hybrid vector search, and Chronos AST time machine."
 authors = ["Thanon Aphithanawat <thanon@aphithanawat.me>"]

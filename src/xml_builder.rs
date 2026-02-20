@@ -42,7 +42,7 @@ pub fn build_context_xml(repository_map: Option<&str>, files: &[(String, String)
 
     writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))?;
 
-    let root = BytesStart::new("neurosiphon");
+    let root = BytesStart::new("cortexast");
     writer.write_event(Event::Start(root))?;
 
     if let Some(map_text) = repository_map {
@@ -64,7 +64,7 @@ pub fn build_context_xml(repository_map: Option<&str>, files: &[(String, String)
         writer.write_event(Event::End(BytesEnd::new("file")))?;
     }
 
-    writer.write_event(Event::End(BytesEnd::new("neurosiphon")))?;
+    writer.write_event(Event::End(BytesEnd::new("cortexast")))?;
 
     let bytes = writer.into_inner().into_inner();
     Ok(String::from_utf8(bytes)?)

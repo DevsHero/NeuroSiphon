@@ -2,19 +2,41 @@
 
 ### CortexAST Priority Rules
 
-> **Megatool API (v1.5+):** Old tool names (`map_repo`, `read_symbol`, `find_usages`, `call_hierarchy`,
-> `get_context_slice`, `save_checkpoint`, `list_checkpoints`, `compare_checkpoint`,
-> `propagation_checklist`) are still accepted as compatibility shims but are deprecated.
-> Always use the megatool API below.
+**The Golden Rule (Non‑Negotiable):**
+- NEVER use standard IDE/shell tools (`grep`, `rg`, `cat`, `head`, `tree`, `ls`, `git diff`) for codebase exploration, symbol lookup, or refactor verification.
+- ALWAYS use CortexAST Megatools. They are AST-accurate, token-efficient, and designed to keep agents on rails.
+- If a tool returns an error telling you which parameter you forgot, treat it as an instruction and retry the tool call (do not guess).
 
-- 🔍 **Explore repos/files** → `cortex_code_explorer` with `action: map_overview` (structure) or `action: deep_slice` (content). NEVER use ls/tree/find/cat.
-- 🎯 **Look up a symbol** → `cortex_symbol_analyzer` with `action: read_source`. NEVER use grep/rg.
-- 🎯 **Find all usages** → `cortex_symbol_analyzer` with `action: find_usages` before changing any symbol signature.
-- 🎯 **Measure blast radius** → `cortex_symbol_analyzer` with `action: blast_radius` BEFORE any rename, move, or delete.
-- 🎯 **Cross-boundary propagation** → `cortex_symbol_analyzer` with `action: propagation_checklist` before changing a shared type/struct/interface.
-- ⏳ **Save a snapshot** → `cortex_chronos` with `action: save_checkpoint` BEFORE any non-trivial refactor.
-- ⏳ **Verify a refactor** → `cortex_chronos` with `action: compare_checkpoint` AFTER editing (NEVER use git diff for this).
-- 🚨 **Check for errors** → `run_diagnostics` immediately after any code edit.
+**Megatool Quick‑Reference**
+
+| Task | Megatool | Action Enum | Required Params |
+|---|---|---|---|
+| Repo overview (files + public symbols) | `cortex_code_explorer` | `map_overview` | `target_dir` (use `.` for whole repo) |
+| Token-budgeted context slice (XML) | `cortex_code_explorer` | `deep_slice` | `target` |
+| Extract exact symbol source | `cortex_symbol_analyzer` | `read_source` | `path` + `symbol_name` *(or `path` + `symbol_names` for batch)* |
+| Find all usages before signature change | `cortex_symbol_analyzer` | `find_usages` | `symbol_name` + `target_dir` |
+| Blast radius before rename/move/delete | `cortex_symbol_analyzer` | `blast_radius` | `symbol_name` + `target_dir` |
+| Cross-boundary update checklist | `cortex_symbol_analyzer` | `propagation_checklist` | `symbol_name` *(or legacy `changed_path`)* |
+| Save pre-change snapshot | `cortex_chronos` | `save_checkpoint` | `path` + `symbol_name` + `semantic_tag` |
+| List snapshots | `cortex_chronos` | `list_checkpoints` | *(none)* |
+| Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` |
+| Compile/lint diagnostics | `run_diagnostics` | *(none)* | `repoPath` |
+
+**The Autonomous Refactoring Flow (Rails)**
+
+Follow this sequence for any non-trivial refactor (especially renames, signature changes, or cross-module work):
+
+1. **Explore** → `cortex_code_explorer(action: map_overview)`
+2. **Isolate** → `cortex_symbol_analyzer(action: read_source)` (get the exact symbol source before editing)
+3. **Measure Impact** →
+  - Use `cortex_symbol_analyzer(action: find_usages)` BEFORE changing any signature
+  - Use `cortex_symbol_analyzer(action: blast_radius)` BEFORE any rename/move/delete
+4. **Checkpoint** → `cortex_chronos(action: save_checkpoint, semantic_tag: pre-refactor)`
+5. **Edit Code** → make the minimal change
+6. **Verify** →
+  - `run_diagnostics` immediately after editing
+  - `cortex_chronos(action: compare_checkpoint)` to verify semantics (never use `git diff`)
+7. **Cross‑Sync** → `cortex_symbol_analyzer(action: propagation_checklist)` when touching shared types/contracts
 
 # MCP Usage Guidelines — ShadowCrawl
 

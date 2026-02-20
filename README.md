@@ -6,7 +6,7 @@ _Giving LLM agents deterministic, AST-level understanding of any codebase — at
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![MCP Ready](https://img.shields.io/badge/MCP-Ready-blue)](https://modelcontextprotocol.io/)
-[![Version](https://img.shields.io/badge/version-1.5.0-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.0-green)](CHANGELOG.md)
 
 ---
 
@@ -32,7 +32,7 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 ---
 
-## 🛠️ MCP Tool Reference (v1.5.0 — Megatool API)
+## 🛠️ MCP Tool Reference (v2.0.0 — Megatool API)
 
 > **Megatool API:** 10 standalone tools consolidated into 4 megatools with `action` enum routing. Old tool names are accepted as compatibility shims but deprecated. Use the new API below.
 
@@ -82,6 +82,23 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 ### 🚨 `run_diagnostics` — Compiler Whisperer
 Auto-detects project type (`cargo check` / `tsc --noEmit`), runs the compiler, maps errors directly to AST source lines. **Run immediately after any code edit.**
+
+
+---
+
+## 🧭 AI‑Native Workflow (Megatools on Rails)
+
+Megatools exist to prevent **LLM decision fatigue** (too many tools to choose from) and **token bloat** (too much schema + too much output). Instead of exposing a long list of tiny tools, CortexAST exposes 4 Megatools with an `action` enum so the agent makes one decision at a time.
+
+For any non-trivial refactor (rename/move/delete, signature change, or cross-module update), follow this sequence:
+
+Explore (`cortex_code_explorer(action: map_overview)`) ➔
+Isolate (`cortex_symbol_analyzer(action: read_source)`) ➔
+Measure Impact (`find_usages` / `blast_radius`) ➔
+Checkpoint (`cortex_chronos(action: save_checkpoint)`) ➔
+Edit Code ➔
+Verify (`run_diagnostics` + `cortex_chronos(action: compare_checkpoint)`) ➔
+Cross‑Sync (`cortex_symbol_analyzer(action: propagation_checklist)`).
 
 
 ---

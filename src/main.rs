@@ -94,7 +94,14 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Start MCP stdio server
-    Mcp,
+    Mcp {
+        /// Workspace root used as the default repoPath for all tool calls.
+        /// Set this in your VS Code / Claude Desktop MCP config:
+        ///   "args": ["mcp", "--root", "/absolute/path/to/your/project"]
+        /// Also accepted via the CORTEXAST_ROOT environment variable.
+        #[arg(long, value_name = "PATH")]
+        root: Option<PathBuf>,
+    },
 }
 
 fn auto_query_limit(budget_tokens: usize, entry_count: usize, configured_default: usize) -> usize {
@@ -111,8 +118,8 @@ fn auto_query_limit(budget_tokens: usize, entry_count: usize, configured_default
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if matches!(cli.cmd, Some(Command::Mcp)) {
-        return run_stdio_server();
+    if let Some(Command::Mcp { root }) = cli.cmd {
+        return run_stdio_server(root);
     }
 
     let repo_root = std::env::current_dir().context("Failed to get current dir")?;

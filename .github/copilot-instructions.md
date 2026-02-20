@@ -64,6 +64,8 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
 **`repoPath` best practice:**
 - Always pass `repoPath` explicitly on every tool call (e.g. `repoPath="/Users/me/project"`). Without it, the server tries `git rev-parse --show-toplevel` → `initialize` workspace root → `cwd`, but VS Code may spawn the MCP server with `$HOME` as cwd, causing all path resolution to fail silently.
 - Use the absolute workspace root path, not a subdirectory.
+- **Server owners**: configure `--root /absolute/path/to/project` in your MCP server args (or set `CORTEXAST_ROOT` env var). This is the most reliable fix — it sets the default root at server startup so every tool call resolves correctly even without an explicit `repoPath`. Example VS Code `settings.json`: `"args": ["mcp", "--root", "/Users/me/my-project"]`.
+- Fallback order when `--root`/`CORTEXAST_ROOT` are not configured: `repoPath` param → cached → `workspaceFolders` from MCP `initialize` → `git rev-parse` → `cwd` (`$HOME` — **always wrong in VS Code**).
 
 **Propagation best practice (Hybrid Omni‑Match):**
 - `propagation_checklist` automatically matches common casing variants of `symbol_name` (PascalCase / camelCase / snake_case).
@@ -123,14 +125,16 @@ Strict mode (default):
 - In strict mode with an explicit schema, metadata keys like `_title` / `_url` are suppressed.
 
 Confidence safety (mandatory):
-- `confidence == 0.0` + `placeholder_page` warning fires **only when ALL of the following are true**:
+- `confidence == 0.0` + `placeholder_page` warning fires **only when BOTH of the following are true**:
   1. `word_count < placeholder_word_threshold` (default 10) **or** content has ≤ 1 non-empty line
-  2. ≥ `placeholder_empty_ratio` (default 0.9) of schema fields are null/empty
-  3. **No single field** contains real extracted data
+  2. ≥ `placeholder_empty_ratio` (default 0.9) of **non-array** schema fields are null/empty string
+  - **Empty arrays are excluded from condition 2** — `[]` is a valid "no items found" result and is
+    never counted as a placeholder signal. A schema with only array fields (`structs`, `modules`, etc.)
+    will **never** trigger confidence=0.0 via this path.
   - When fired: the page is an unrendered JS-only shell (e.g. crates.io, npm). Do NOT trust any fields.
     Escalate to CDP/browser rendering or HITL auth tools.
-  - When NOT fired: if any field has real data (e.g. `structs: [32 items]` but `modules: []`) the
-    `confidence` stays above 0.0 — partial extraction is valid. Do NOT assume the page was broken.
+  - When NOT fired: partial extraction is valid — e.g. `structs: [32 items]` + `modules: []` stays
+    above 0.0 because `structs` is a non-empty array (no scalar fields to fail the check).
 - Tuning: pass `placeholder_word_threshold` (integer) and `placeholder_empty_ratio` (0–1 float) to
   `extract_structured` / `fetch_then_extract` when the defaults cause false positives or false negatives.
 

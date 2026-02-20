@@ -892,11 +892,24 @@ fn score_path(rel_path: &str, terms: &[String]) -> i32 {
     score
 }
 
-pub fn run_stdio_server() -> Result<()> {
+pub fn run_stdio_server(startup_root: Option<PathBuf>) -> Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
 
     let mut state = ServerState::default();
+    // Populate init_root from the CLI --root arg first, then fall back to the
+    // CORTEXAST_ROOT env var.  Either takes priority over the MCP initialize
+    // params and over detect_git_root(), so the very first tool call already
+    // targets the correct workspace even when VS Code spawns the process with
+    // $HOME as cwd and does NOT send workspaceFolders in the initialize message.
+    let env_root = std::env::var("CORTEXAST_ROOT")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    if let Some(r) = startup_root.or(env_root) {
+        state.init_root = Some(r);
+    }
 
     for line in stdin.lock().lines() {
         let Ok(line) = line else { continue };

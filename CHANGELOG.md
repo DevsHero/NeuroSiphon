@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`--root <PATH>` CLI flag** for the `mcp` subcommand: sets the workspace root at server startup so every tool call resolves correctly even when VS Code spawns the process with `$HOME` as cwd and no `workspaceFolders` in the `initialize` params. Configure in VS Code `settings.json`: `"args": ["mcp", "--root", "/absolute/path/to/project"]`.
+- **`CORTEXAST_ROOT` environment variable**: alternative to `--root` for environments that support runtime env config (e.g. Claude Desktop `env` blocks).
+- `cortex_chronos(action=list_checkpoints)` now surfaces legacy flat checkpoints stored directly in `checkpoints/` root (pre-namespace format written before v2.x). These appear under a `(legacy)` namespace section — backward compatible with existing checkpoint files.
 - `cortex_chronos(compare_checkpoint)` supports `tag_b="__live__"` to compare a saved snapshot (`tag_a`) against the current filesystem state (requires `path`).
 - `cortex_symbol_analyzer(action=find_implementations)` to locate Rust/TypeScript implementors of a trait/interface.
 - `cortex_code_explorer(action=deep_slice)` supports `skeleton_only: true` to enforce structural pruning regardless of repo config.
@@ -15,11 +18,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`detect_git_root()`** helper: when no `repoPath` is provided, the server now runs `git rev-parse --show-toplevel` to locate the repo root. Falls back to workspace root captured from the MCP `initialize` params, then `current_dir`.
 
 ### Changed
-- `repo_root_from_params` fallback chain: `repoPath param → last-used cache → init_root (from MCP initialize) → git rev-parse → cwd`. Fixes regression where VS Code spawned the MCP server with `$HOME` as cwd, causing all tools to target the wrong directory.
+- `repo_root_from_params` fallback chain: `repoPath param → last-used cache → init_root (--root / CORTEXAST_ROOT / MCP initialize) → git rev-parse → cwd`. Fixes regression where VS Code spawned the MCP server with `$HOME` as cwd, causing all tools to target the wrong directory.
 - Output truncation: `DEFAULT_MAX_CHARS` corrected to **8 000** (calibrated to stay below VS Code Copilot's ~8 KB inline-display spill threshold). The previous `60 000` default caused all large outputs to be written to workspace storage.
 - MCP `initialize` handler now calls `capture_init_root()` to extract `workspaceFolders` / `rootUri` / `rootPath` from the VS Code initialize params.
+- `docs/MCP_SETUP.md` updated with recommended `--root` config, `CORTEXAST_ROOT` env var example, and BUG-C2 reload instructions.
 
 ### Fixed
+- **BUG-C4**: `list_checkpoints` now finds pre-namespace checkpoint files stored flat in `checkpoints/` root directory (shown under `(legacy)` namespace). Previously these 20+ historical checkpoints were silently invisible.
 - Chronos checkpoint path matching is normalized to repo-relative keys (consistent across save/compare/delete), reducing "No checkpoint found" mismatches caused by absolute vs relative path variants.
 
 ## [2.0.0] — Megatool API

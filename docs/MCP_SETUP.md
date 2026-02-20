@@ -23,20 +23,48 @@ cargo build --release
 
 ## 2) Connect an MCP Client
 
-Example config (Claude Desktop style):
+### Recommended: pass `--root` for reliable workspace detection
+
+CortexAST needs to know where your project lives. When VS Code or Claude Desktop spawns the binary it uses `$HOME` as the working directory, so the server cannot auto-detect your project. Pass `--root` to fix this.
 
 ```json
 {
   "mcpServers": {
     "cortexast": {
       "command": "/absolute/path/to/cortexast",
-      "args": ["mcp"]
+      "args": ["mcp", "--root", "/absolute/path/to/your/project"]
     }
   }
 }
 ```
 
-Restart your MCP client.
+Alternatively, set the `CORTEXAST_ROOT` environment variable (useful for Claude Desktop `env` blocks):
+
+```json
+{
+  "mcpServers": {
+    "cortexast": {
+      "command": "/absolute/path/to/cortexast",
+      "args": ["mcp"],
+      "env": { "CORTEXAST_ROOT": "/absolute/path/to/your/project" }
+    }
+  }
+}
+```
+
+> **VS Code Copilot users**: add `--root` to the `args` array in your `settings.json` `github.copilot.chat.mcpServers` entry, pointing to the workspace folder you want CortexAST to target.
+
+Fallback priority when `--root` / `CORTEXAST_ROOT` are omitted (least reliable for VS Code):
+1. Per-call `repoPath` argument (always works)
+2. `workspaceFolders[0].uri` from MCP `initialize` params (VS Code may or may not send this)
+3. `git rev-parse --show-toplevel` from cwd
+4. `cwd` (usually `$HOME` in VS Code — **avoid relying on this**)
+
+Restart your MCP client after editing the config.
+
+### Reloading after binary update (BUG-C2 fix)
+
+After rebuilding (`cargo build --release`) or downloading a new binary, VS Code Copilot caches the tool schema from the previous session. If you see **"must be equal to one of the allowed values"** errors for actions like `find_implementations` or `delete_checkpoint`, you're hitting the stale cache. Fix: open the VS Code Command Palette → **"MCP: Restart Server"** (or reload the VS Code window with `Cmd+Shift+P` → `Developer: Reload Window`).
 
 ## 3) MCP Tools
 

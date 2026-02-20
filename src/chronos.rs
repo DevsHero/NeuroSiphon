@@ -367,6 +367,14 @@ pub fn list_checkpoints(repo_root: &Path, cfg: &Config, namespace: Option<&str>)
                     }
                 }
                 dirs.sort_by(|(a, _), (b, _)| a.cmp(b));
+                // Backward compat: surface any flat .json checkpoints stored
+                // directly inside checkpoints/ (written before namespace
+                // sub-directories were introduced).  load_all is non-recursive
+                // so it only picks up files in the immediate parent, not the
+                // already-listed namespace sub-dirs.
+                if !load_all(&parent).is_empty() {
+                    dirs.push(("(legacy)".to_string(), parent.clone()));
+                }
             }
             if dirs.is_empty() {
                 return Ok("*(no checkpoints yet)*".to_string());

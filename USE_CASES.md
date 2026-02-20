@@ -165,7 +165,7 @@ Treat onboarding like incident response:
 
 [1] Build a scoped architecture map
   Intent: Identify the smallest set of files that can contain the bug.
-  Action: cortex_code_explorer(action=map_overview, target_dir=".", search_filter="auth|token|session|middleware", max_chars=15000)
+  Action: cortex_code_explorer(action=map_overview, target_dir=".", search_filter="auth|token|session|middleware", max_chars=8000)
   Signal: Finds top-level modules + exported symbols likely related to the bug.
 
 [2] Pick a suspicious symbol and trace semantics

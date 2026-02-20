@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-BIN_PATH="${1:?usage: bench_run.zsh /path/to/neurosiphon <repo1> [repo2 ...]}"
+BIN_PATH="${1:?usage: bench_run.zsh /path/to/cortexast <repo1> [repo2 ...]}"
 shift
 
 if [[ ! -x "$BIN_PATH" ]]; then
@@ -11,7 +11,7 @@ fi
 
 output_dir_for_repo() {
   local repo="$1"
-  local cfg="$repo/.neurosiphon.json"
+  local cfg="$repo/.cortexast.json"
   if [[ -f "$cfg" ]]; then
     if command -v python3 >/dev/null 2>&1; then
       local od
@@ -43,7 +43,7 @@ PY
     fi
   fi
 
-  echo ".neurosiphon"
+  echo ".cortexast"
 }
 
 # Count raw bytes for a repo under a target directory, excluding common heavy dirs.
@@ -65,7 +65,7 @@ raw_bytes_for() {
     '*/.next/*'
     '*/.nuxt/*'
     '*/coverage/*'
-    '*/.neurosiphon/*'
+    '*/.cortexast/*'
     '*/.venv/*'
     '*/venv/*'
     '*/__pycache__/*'
@@ -112,7 +112,7 @@ raw_files_for() {
     '*/.next/*'
     '*/.nuxt/*'
     '*/coverage/*'
-    '*/.neurosiphon/*'
+    '*/.cortexast/*'
     '*/.venv/*'
     '*/venv/*'
     '*/__pycache__/*'

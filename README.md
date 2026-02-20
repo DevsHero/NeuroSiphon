@@ -43,14 +43,14 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - `target_dir` (**required**) — directory to map (use `'.'` for whole repo)
 - `search_filter` — case-insensitive substring, **OR via `|`** (e.g. `"auth|user"`)
 - `ignore_gitignore` — set `true` to include generated / git-ignored files
-- `max_chars` — optional output cap (default **8 000**, max **16 000**; clamped to prevent IDE interception)
+- `max_chars` — optional output cap (default **8 000**; raise up to ~**30 000** only if your client can safely handle larger inline outputs)
 
 **`action: deep_slice`** — Token-budget-aware XML slice of a file or directory.
 - `target` (**required**) — relative path to file or directory
 - `query` — optional semantic vector search; ranks files by relevance first
 - `budget_tokens` — token budget (default 32 000)
 - `skeleton_only: true` — enforce structural pruning (skeleton output only) regardless of repo config
-- Output safety: server enforces a strict inline limit via `max_chars` (default **8 000**, max **16 000**) and **truncates inline** to avoid editor-side "spill" behaviors
+- Output safety: server enforces a strict inline limit via `max_chars` (default **8 000**) and **truncates inline** to avoid editor-side "spill" behaviors
 
 ### 🎯 `cortex_symbol_analyzer` — Symbol Analysis Megatool
 🔥 Always use instead of grep/rg/ag. Modes via `action`:
@@ -60,7 +60,7 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - `symbol_name` (**required unless using `symbol_names`**) — target symbol name
 - `symbol_names: ["A","B","C"]` — batch mode: multiple symbols in one call (ignores `symbol_name`)
 - `skeleton_only: true` — return signatures/structure only (drastically reduces tokens when you only need the API)
-- `max_chars` — optional output cap (default **8 000**, max **16 000**)
+- `max_chars` — optional output cap (default **8 000**)
 
 **`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldAccesses** / **FieldInits**.
 - `symbol_name` + `target_dir` (**required**)
@@ -108,7 +108,7 @@ Full resolution order (first non-dead value wins):
 6. `cwd` — **refused if it equals `$HOME` or OS root** → returns a **CRITICAL error** the LLM can act on
 
 ### 🔒 Output safety (`max_chars`)
-All megatools accept an optional `max_chars` (default **8 000**, max **16 000**). The server will **truncate inline** and append an explicit marker when the limit is hit — this prevents VS Code/Cursor-style interception that writes large tool outputs into workspace storage.
+All megatools accept an optional `max_chars` (default **8 000**). The server will **truncate inline** and append an explicit marker when the limit is hit — this prevents VS Code/Cursor-style interception that writes large tool outputs into workspace storage.
 
 
 ---

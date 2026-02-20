@@ -264,7 +264,9 @@ pub fn delete_checkpoints(
                 "Error: Namespace '{}' does not exist. \
                 If '{}' is actually a semantic tag, you must call delete_checkpoint \
                 with semantic_tag='{}' (leaving namespace as 'default').",
-                ns, ns, ns
+                ns,
+                ns,
+                ns
             ));
         }
         let count = fs::read_dir(&dir)
@@ -296,17 +298,26 @@ pub fn delete_checkpoints(
     if dir.exists() {
         for (file_path, rec) in load_all_with_files(&dir) {
             if let Some(sym) = symbol_name {
-                if rec.symbol != sym { continue; }
+                if rec.symbol != sym {
+                    continue;
+                }
             }
             if let Some(tag) = semantic_tag {
-                if rec.tag != tag { continue; }
+                if rec.tag != tag {
+                    continue;
+                }
             }
             if let Some(ref hint) = path_hint_rel {
-                if normalize_record_path(repo_root, &rec.path) != *hint { continue; }
+                if normalize_record_path(repo_root, &rec.path) != *hint {
+                    continue;
+                }
             }
             matched += 1;
             match fs::remove_file(&file_path) {
-                Ok(_) => { deleted += 1; deleted_from = Some(dir.clone()); }
+                Ok(_) => {
+                    deleted += 1;
+                    deleted_from = Some(dir.clone());
+                }
                 Err(e) => errors.push(format!("- {}: {e}", file_path.display())),
             }
         }
@@ -319,17 +330,26 @@ pub fn delete_checkpoints(
         if parent.exists() && parent != dir {
             for (file_path, rec) in load_all_with_files(&parent) {
                 if let Some(sym) = symbol_name {
-                    if rec.symbol != sym { continue; }
+                    if rec.symbol != sym {
+                        continue;
+                    }
                 }
                 if let Some(tag) = semantic_tag {
-                    if rec.tag != tag { continue; }
+                    if rec.tag != tag {
+                        continue;
+                    }
                 }
                 if let Some(ref hint) = path_hint_rel {
-                    if normalize_record_path(repo_root, &rec.path) != *hint { continue; }
+                    if normalize_record_path(repo_root, &rec.path) != *hint {
+                        continue;
+                    }
                 }
                 matched += 1;
                 match fs::remove_file(&file_path) {
-                    Ok(_) => { deleted += 1; deleted_from = Some(parent.clone()); }
+                    Ok(_) => {
+                        deleted += 1;
+                        deleted_from = Some(parent.clone());
+                    }
                     Err(e) => errors.push(format!("- {}: {e}", file_path.display())),
                 }
             }
@@ -359,8 +379,7 @@ pub fn delete_checkpoints(
         .unwrap_or_else(|| dir.display().to_string());
     let mut out = format!(
         "Deleted {deleted}/{matched} checkpoint(s) from namespace '{}' ({}).",
-        ns,
-        location
+        ns, location
     );
     if !errors.is_empty() {
         out.push_str("\n\nSome deletes failed:\n");

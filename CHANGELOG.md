@@ -7,29 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Added
-- **`--root <PATH>` CLI flag** for the `mcp` subcommand: sets the workspace root at server startup so every tool call resolves correctly even when VS Code spawns the process with `$HOME` as cwd and no `workspaceFolders` in the `initialize` params. Configure in VS Code `settings.json`: `"args": ["mcp", "--root", "/absolute/path/to/project"]`.
-- **`CORTEXAST_ROOT` environment variable**: alternative to `--root` for environments that support runtime env config (e.g. Claude Desktop `env` blocks).
-- **`VSCODE_WORKSPACE_FOLDER` / `VSCODE_CWD` auto-detection**: VS Code / Cursor / Windsurf inject these into child processes.
-- **`IDEA_INITIAL_DIRECTORY`**: JetBrains IDEs (IntelliJ, GoLand, WebStorm, etc.).
-- **`PWD` / `INIT_CWD`** (guarded): POSIX shell / Zed / Neovim — only used when value differs from `$HOME` to avoid the HOME-as-cwd trap.
-- **Dynamic Git-Root Recovery** in `repo_root_from_params`: if all startup paths resolve to `$HOME` or `/` (`is_dead_root()`), the server inspects the incoming tool call's `path`/`target_dir`/`target` argument and walks the directory tree upward looking for `.git` or `.cortexast.json`. On success, `repo_root` is permanently healed for the session — zero-config self-repair across any IDE.
-- `cortex_chronos(action=list_checkpoints)` now surfaces legacy flat checkpoints stored directly in `checkpoints/` root (pre-namespace format written before v2.x). These appear under a `(legacy)` namespace section — backward compatible with existing checkpoint files.
-- `cortex_chronos(compare_checkpoint)` supports `tag_b="__live__"` to compare a saved snapshot (`tag_a`) against the current filesystem state (requires `path`).
-- `cortex_symbol_analyzer(action=find_implementations)` to locate Rust/TypeScript implementors of a trait/interface.
-- `cortex_code_explorer(action=deep_slice)` supports `skeleton_only: true` to enforce structural pruning regardless of repo config.
-- **Chronos namespaces:** all Chronos actions accept an optional `namespace` parameter (default: `"default"`). Checkpoints are stored under `checkpoints/<namespace>/`, allowing isolation by session/job. `delete_checkpoint` with only `namespace` purges the entire namespace directory in one call — solves stale QC checkpoint accumulation.
-- **`detect_git_root()`** helper: when no `repoPath` is provided, the server now runs `git rev-parse --show-toplevel` to locate the repo root. Falls back to workspace root captured from the MCP `initialize` params, then `current_dir`.
-
-### Changed
-- `repo_root_from_params` fallback chain: `repoPath → cached → init_root (--root / omni-env / MCP initialize) → git rev-parse → dynamic recovery from tool arg hint → cwd`. IDE-agnostic: works on VS Code, Cursor, JetBrains, Zed, Neovim, and any POSIX terminal.
-- Output truncation: `DEFAULT_MAX_CHARS` corrected to **8 000** (calibrated to stay below VS Code Copilot's ~8 KB inline-display spill threshold). The previous `60 000` default caused all large outputs to be written to workspace storage.
-- MCP `initialize` handler now calls `capture_init_root()` to extract `workspaceFolders` / `rootUri` / `rootPath` from the VS Code initialize params.
-- `docs/MCP_SETUP.md` updated with recommended `--root` config, `CORTEXAST_ROOT` env var example, and BUG-C2 reload instructions.
-
-### Fixed
-- **BUG-C4**: `list_checkpoints` now finds pre-namespace checkpoint files stored flat in `checkpoints/` root directory (shown under `(legacy)` namespace). Previously these 20+ historical checkpoints were silently invisible.
-- Chronos checkpoint path matching is normalized to repo-relative keys (consistent across save/compare/delete), reducing "No checkpoint found" mismatches caused by absolute vs relative path variants.
+- _No unreleased changes yet._
 
 ## [2.0.0] — Megatool API
 
@@ -62,9 +40,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **README.md Agentic Workflow Playbook section** — links to USE_CASES.md
 - **`.cortexast/` added to `.gitignore`** — prevents Chronos snapshot files from being committed
 
+### Added (v2.0.0 hardening)
+- **Protocol-first workspace root resolution**: MCP `initialize` (`rootUri` / `rootPath` / `workspaceFolders`) is captured and becomes the canonical `repo_root` for the session.
+- **Omni-root bootstraps**: `--root`, `CORTEXAST_ROOT`, and IDE env vars (`VSCODE_WORKSPACE_FOLDER`, `VSCODE_CWD`, `IDEA_INITIAL_DIRECTORY`, `PWD`/`INIT_CWD` guarded) are supported for pre-initialize startup.
+- **CRITICAL dead-root safeguard**: refuses to operate when the resolved root is OS root or `$HOME` (prevents catastrophic whole-filesystem scans).
+- **Windows file URI decoding**: handles `file:///C:/repo` by stripping the extra leading slash so paths are valid on Windows.
+- `cortex_chronos(action=list_checkpoints)` surfaces legacy flat checkpoints stored directly under `checkpoints/` root (pre-namespace layout) under a `(legacy)` namespace section.
+- `cortex_chronos(action=delete_checkpoint)`:
+  - Legacy fallback deletion: if no matches exist in a namespace dir, searches the legacy flat `checkpoints/` dir.
+  - Self-teaching errors for non-existent namespace purge requests.
+- `cortex_chronos(compare_checkpoint)` supports `tag_b="__live__"` to compare a saved snapshot against the filesystem (requires `path`).
+- `cortex_symbol_analyzer(action=find_implementations)` locates Rust/TypeScript implementors of a trait/interface.
+- `cortex_code_explorer(action=deep_slice)` supports `skeleton_only: true`.
+- **Chronos namespaces:** all Chronos actions accept an optional `namespace` parameter (default: `"default"`). Checkpoints are stored under `checkpoints/<namespace>/`.
+
 ### Changed
 - **Recommended agent rules updated** across all 5 client templates (VS Code, Cursor, Windsurf, Cline, Claude Desktop) to reference new megatool + action syntax
 - **MCP Tool Reference in README.md** rewritten for megatool API with per-action parameter documentation
+
+### Changed (v2.0.0 hardening)
+- Root resolution order is now protocol-first and cross-IDE safe: `repoPath → MCP initialize → startup bootstrap/env vars → find-up heuristic from tool args → cwd (CRITICAL if dead)`.
+- Output safety defaults to `max_chars=8_000` and always truncates inline to prevent IDE spill-to-disk.
+- Removed legacy spill-to-`/tmp` behaviors to keep Windows/macOS/Linux parity.
+
+### Fixed (v2.0.0 hardening)
+- **BUG-C1**: `$HOME`/dead-cwd root resolution now emits a CRITICAL error with an actionable message instead of silently scanning.
+- **BUG-C4**: Chronos lists and manages legacy flat checkpoints for backward compatibility.
 
 ---
 

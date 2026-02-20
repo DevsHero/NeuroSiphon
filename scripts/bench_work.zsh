@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-BIN_PATH="${1:?usage: bench_work.zsh /path/to/neurosiphon <work_root>}"
+BIN_PATH="${1:?usage: bench_work.zsh /path/to/cortexast <work_root>}"
 WORK_ROOT="${2:-/Users/hero/Documents/work}"
 
 if [[ ! -x "$BIN_PATH" ]]; then
@@ -14,7 +14,7 @@ if [[ ! -d "$WORK_ROOT" ]]; then
 fi
 
 # 1) Wipe old scan outputs (best-effort default output dir)
-find "$WORK_ROOT" -maxdepth 4 -type d -name .neurosiphon -prune -print | while IFS= read -r d; do
+find "$WORK_ROOT" -maxdepth 4 -type d -name .cortexast -prune -print | while IFS= read -r d; do
   rm -rf "$d"
 done
 
@@ -46,7 +46,7 @@ echo "SUMMARY_SLICE ok=$ok_slice fail=$fail_slice tested=$tested"
 echo "== WORK_QUERY_PASS (cold rebuild per repo) =="
 for d in "$WORK_ROOT"/*; do
   [[ -d "$d" ]] || continue
-  rm -rf "$d/.neurosiphon"
+  rm -rf "$d/.cortexast"
 
   name=$(basename "$d")
   target='.'

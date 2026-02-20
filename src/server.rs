@@ -22,7 +22,7 @@ pub struct ServerState {
     ///   2. MCP `initialize` params (`rootUri` / `rootPath` / `workspaceFolders`).
     ///   3. CLI `--root` / `CORTEXAST_ROOT` env var — startup bootstrap.
     ///   4. IDE-specific env vars (VSCODE_WORKSPACE_FOLDER, IDEA_INITIAL_DIRECTORY, …).
-    ///   5. `git rev-parse --show-toplevel` subprocess.
+    ///   5. Find-up heuristic on tool args (`path` / `target_dir` / `target`).
     ///   6. `cwd` — last resort; refused if it equals $HOME or OS root.
     repo_root: Option<PathBuf>,
 }
@@ -83,7 +83,11 @@ fn extract_path_from_uri(uri: &str) -> Option<PathBuf> {
     };
 
     let s = rest.trim_end_matches('/');
-    if s.is_empty() { None } else { Some(PathBuf::from(s)) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(s))
+    }
 }
 
 impl ServerState {
@@ -144,11 +148,20 @@ impl ServerState {
             .unwrap_or_default();
         // PWD and INIT_CWD must be filtered — they equal $HOME when the IDE
         // spawns the process in the wrong dir, which is a dead root.
-        let env_root = std::env::var("CORTEXAST_ROOT").ok()
+        let env_root = std::env::var("CORTEXAST_ROOT")
+            .ok()
             .or_else(|| std::env::var("VSCODE_WORKSPACE_FOLDER").ok())
             .or_else(|| std::env::var("IDEA_INITIAL_DIRECTORY").ok())
-            .or_else(|| std::env::var("INIT_CWD").ok().filter(|v| v.trim() != home.trim()))
-            .or_else(|| std::env::var("PWD").ok().filter(|v| v.trim() != home.trim()))
+            .or_else(|| {
+                std::env::var("INIT_CWD")
+                    .ok()
+                    .filter(|v| v.trim() != home.trim())
+            })
+            .or_else(|| {
+                std::env::var("PWD")
+                    .ok()
+                    .filter(|v| v.trim() != home.trim())
+            })
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .map(PathBuf::from);
@@ -161,7 +174,8 @@ impl ServerState {
         // Walk the hint's ancestor chain looking for a project root marker
         // (.git, Cargo.toml, package.json). This recovers cleanly even when the
         // hint is relative, as long as we can anchor it to an absolute base.
-        let target_hint = params.get("target_dir")
+        let target_hint = params
+            .get("target_dir")
             .or_else(|| params.get("path"))
             .or_else(|| params.get("target"))
             .and_then(|v| v.as_str());
@@ -779,7 +793,10 @@ Call cortex_chronos with action='list_checkpoints' first to see what exists.".to
 
             // Standalone tool
             "run_diagnostics" => {
-                let repo_root = match self.repo_root_from_params(&args) { Ok(r) => r, Err(e) => return err(e) };
+                let repo_root = match self.repo_root_from_params(&args) {
+                    Ok(r) => r,
+                    Err(e) => return err(e),
+                };
                 match run_diagnostics(&repo_root) {
                     Ok(s) => ok(s),
                     Err(e) => err(format!("diagnostics failed: {e}")),
@@ -881,7 +898,10 @@ Call cortex_chronos with action='list_checkpoints' first to see what exists.".to
 
             // Deprecated (kept for now): skeleton reader
             "read_file_skeleton" => {
-                let repo_root = match self.repo_root_from_params(&args) { Ok(r) => r, Err(e) => return err(e) };
+                let repo_root = match self.repo_root_from_params(&args) {
+                    Ok(r) => r,
+                    Err(e) => return err(e),
+                };
                 let Some(p) = args.get("path").and_then(|v| v.as_str()) else {
                     return err("Missing path".to_string());
                 };
@@ -1036,13 +1056,24 @@ pub fn run_stdio_server(startup_root: Option<PathBuf>) -> Result<()> {
     // This is a best-effort bootstrap only. The MCP `initialize` request
     // (capture_init_root) is the canonical, protocol-level source and will
     // overwrite this value when the editor sends it.
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_default();
-    let env_root = std::env::var("CORTEXAST_ROOT").ok()
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    let env_root = std::env::var("CORTEXAST_ROOT")
+        .ok()
         .or_else(|| std::env::var("VSCODE_WORKSPACE_FOLDER").ok())
         .or_else(|| std::env::var("VSCODE_CWD").ok())
         .or_else(|| std::env::var("IDEA_INITIAL_DIRECTORY").ok())
-        .or_else(|| std::env::var("PWD").ok().filter(|v| v.trim() != home.trim()))
-        .or_else(|| std::env::var("INIT_CWD").ok().filter(|v| v.trim() != home.trim()))
+        .or_else(|| {
+            std::env::var("PWD")
+                .ok()
+                .filter(|v| v.trim() != home.trim())
+        })
+        .or_else(|| {
+            std::env::var("INIT_CWD")
+                .ok()
+                .filter(|v| v.trim() != home.trim())
+        })
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .map(PathBuf::from);
@@ -1079,14 +1110,15 @@ pub fn run_stdio_server(startup_root: Option<PathBuf>) -> Result<()> {
                     state.capture_init_root(p);
                 }
                 json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {
-                    "protocolVersion": msg.get("params").and_then(|p| p.get("protocolVersion")).cloned().unwrap_or(json!("2024-11-05")),
-                    "capabilities": { "tools": { "listChanged": true } },
-                    "serverInfo": { "name": "cortexast", "version": "0.2.0" }
-                }
-            })}
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "protocolVersion": msg.get("params").and_then(|p| p.get("protocolVersion")).cloned().unwrap_or(json!("2024-11-05")),
+                        "capabilities": { "tools": { "listChanged": true } },
+                        "serverInfo": { "name": "cortexast", "version": env!("CARGO_PKG_VERSION") }
+                    }
+                })
+            }
             "ping" => json!({
                 "jsonrpc": "2.0",
                 "id": id,

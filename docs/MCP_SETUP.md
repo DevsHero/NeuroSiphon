@@ -61,9 +61,8 @@ Fallback priority when `--root` / `CORTEXAST_ROOT` are omitted:
 4. `VSCODE_CWD` — VS Code secondary
 5. `IDEA_INITIAL_DIRECTORY` — JetBrains (IntelliJ, GoLand, WebStorm, …)
 6. `PWD` / `INIT_CWD` — POSIX shell / Zed / Neovim (skipped if equal to `$HOME`)
-7. `git rev-parse --show-toplevel` from cwd
-8. **Dynamic Git-Root Recovery** — if all above still resolve to `$HOME` or `/`, the server inspects the `path`/`target_dir`/`target` argument of the incoming tool call and walks up the directory tree looking for a `.git` dir or `.cortexast.json`, permanently healing `repo_root` for the rest of the session
-9. `cwd` (usually `$HOME` in VS Code — **avoid relying on this**)
+7. **Find-up heuristic** — if a tool call includes `path` / `target_dir` / `target`, CortexAST walks ancestor directories looking for a project root marker (`.git`, `Cargo.toml`, `package.json`)
+8. `cwd` (usually `$HOME` in some IDEs). If `cwd` resolves to `$HOME` or OS root, CortexAST returns a **CRITICAL** error and refuses to proceed.
 
 Restart your MCP client after editing the config.
 

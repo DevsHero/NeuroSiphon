@@ -160,6 +160,114 @@ fn load_all(dir: &Path) -> Vec<CheckpointRecord> {
     out
 }
 
+fn load_all_with_files(dir: &Path) -> Vec<(PathBuf, CheckpointRecord)> {
+    let mut out: Vec<(PathBuf, CheckpointRecord)> = Vec::new();
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+
+    for ent in entries.flatten() {
+        let p = ent.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let text = match fs::read_to_string(&p) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let rec = match serde_json::from_str::<CheckpointRecord>(&text) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        out.push((p, rec));
+    }
+
+    out.sort_by(|(_pa, a), (_pb, b)| b.created_unix_ms.cmp(&a.created_unix_ms));
+    out
+}
+
+pub fn delete_checkpoints(
+    repo_root: &Path,
+    cfg: &Config,
+    symbol_name: Option<&str>,
+    semantic_tag: Option<&str>,
+    path_hint: Option<&str>,
+) -> Result<String> {
+    let dir = checkpoints_dir(repo_root, cfg);
+    if !dir.exists() {
+        return Ok("No checkpoint store found (nothing to delete).".to_string());
+    }
+
+    let symbol_name = symbol_name.map(|s| s.trim()).filter(|s| !s.is_empty());
+    let semantic_tag = semantic_tag.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    let path_hint_rel = path_hint
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            let abs = resolve_path(repo_root, p);
+            abs.strip_prefix(repo_root)
+                .map(|pp| pp.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| abs.to_string_lossy().replace('\\', "/"))
+        });
+
+    let mut deleted: usize = 0;
+    let mut matched: usize = 0;
+    let mut errors: Vec<String> = Vec::new();
+
+    for (file_path, rec) in load_all_with_files(&dir) {
+        if let Some(sym) = symbol_name {
+            if rec.symbol != sym {
+                continue;
+            }
+        }
+        if let Some(tag) = semantic_tag {
+            if rec.tag != tag {
+                continue;
+            }
+        }
+        if let Some(ref hint) = path_hint_rel {
+            if rec.path != *hint {
+                continue;
+            }
+        }
+
+        matched += 1;
+        match fs::remove_file(&file_path) {
+            Ok(_) => deleted += 1,
+            Err(e) => errors.push(format!("- {}: {e}", file_path.display())),
+        }
+    }
+
+    if matched == 0 {
+        let mut filters: Vec<String> = Vec::new();
+        if let Some(sym) = symbol_name {
+            filters.push(format!("symbol='{sym}'"));
+        }
+        if let Some(tag) = semantic_tag {
+            filters.push(format!("tag='{tag}'"));
+        }
+        if let Some(h) = path_hint_rel {
+            filters.push(format!("path='{h}'"));
+        }
+        return Ok(format!(
+            "No checkpoints matched the provided filters ({}).\nTip: run list_checkpoints to see what exists.",
+            if filters.is_empty() { "no filters".to_string() } else { filters.join(", ") }
+        ));
+    }
+
+    let mut out = format!(
+        "Deleted {deleted}/{matched} checkpoint(s) from {}.",
+        dir.display()
+    );
+    if !errors.is_empty() {
+        out.push_str("\n\nSome deletes failed:\n");
+        out.push_str(&errors.join("\n"));
+    }
+    Ok(out)
+}
+
 pub fn list_checkpoints(repo_root: &Path, cfg: &Config) -> Result<String> {
     let dir = checkpoints_dir(repo_root, cfg);
     if !dir.exists() {

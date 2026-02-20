@@ -77,13 +77,19 @@ impl ServerState {
                                 "target_dir": { "type": "string", "description": "Scope directory (use '.' for entire repo). Required for find_usages/blast_radius; optional for propagation_checklist (defaults '.')." },
                                 "ignore_gitignore": { "type": "boolean", "description": "(propagation_checklist) Include generated / git-ignored stubs." },
 
+                                "aliases": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "(propagation_checklist only) An array of alternative names for the symbol across boundaries (e.g., ['trainingCaps']). The system will automatically generate standard casing variations (camelCase, snake_case, PascalCase), so you only need to provide completely different alias names here."
+                                },
+
                                 "path": { "type": "string", "description": "(read_source) Source file containing the symbol. Required for read_source." },
                                 "symbol_names": { "type": "array", "items": { "type": "string" }, "description": "(read_source) Optional batch mode. If provided, extracts all symbols from `path` and ignores `symbol_name`." },
 
                                 "changed_path": { "type": "string", "description": "(propagation_checklist) Optional legacy mode: path to a changed contract file (e.g. .proto). If provided, overrides symbol-based mode." },
                                 "max_symbols": { "type": "integer", "description": "(propagation_checklist legacy) Optional max extracted symbols (default 20)." }
                             },
-                            "required": ["action", "symbol_name"]
+                            "required": ["action"]
                         }
                     },
                     {
@@ -94,8 +100,8 @@ impl ServerState {
                             "properties": {
                                 "action": {
                                     "type": "string",
-                                    "enum": ["save_checkpoint", "list_checkpoints", "compare_checkpoint"],
-                                    "description": "Required — selects the Chronos operation.\n• `save_checkpoint` — Saves an AST-level snapshot of a named symbol under a semantic tag. Call this BEFORE any non-trivial refactor or edit. Requires `path` (source file path), `symbol_name`, and `semantic_tag` (or `tag` alias — use descriptive values like 'pre-refactor', 'baseline', 'v1-before-split').\n• `list_checkpoints` — Lists all saved snapshots grouped by semantic tag. Call this before a comparison to know which tags exist. Only `repoPath` is relevant (optional).\n• `compare_checkpoint` — Structurally compares two named snapshots of a symbol, ignoring whitespace and line-number differences. Returns an AST-level semantic diff. Call this AFTER editing to verify correctness. Requires `symbol_name`, `tag_a`, `tag_b`; `path` is optional as a disambiguation hint when the same tag+symbol exists in multiple files."
+                                    "enum": ["save_checkpoint", "list_checkpoints", "compare_checkpoint", "delete_checkpoint"],
+                                    "description": "Required — selects the Chronos operation.\n• `save_checkpoint` — Saves an AST-level snapshot of a named symbol under a semantic tag. Call this BEFORE any non-trivial refactor or edit. Requires `path` (source file path), `symbol_name`, and `semantic_tag` (or `tag` alias — use descriptive values like 'pre-refactor', 'baseline', 'v1-before-split').\n• `list_checkpoints` — Lists all saved snapshots grouped by semantic tag. Call this before a comparison to know which tags exist. Only `repoPath` is relevant (optional).\n• `compare_checkpoint` — Structurally compares two named snapshots of a symbol, ignoring whitespace and line-number differences. Returns an AST-level semantic diff. Call this AFTER editing to verify correctness. Requires `symbol_name`, `tag_a`, `tag_b`; `path` is optional as a disambiguation hint when the same tag+symbol exists in multiple files.\n• `delete_checkpoint` — Deletes checkpoint files from the local checkpoint store. Provide at least one filter (`symbol_name` and/or `semantic_tag`/`tag`). Optional: `path` to disambiguate when the same symbol+tag exists in multiple files."
                                 },
                                 "repoPath": { "type": "string", "description": "Optional absolute path to the repo root." },
 
@@ -215,13 +221,13 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                             let query_limit = args.get("query_limit").and_then(|v| v.as_u64()).map(|n| n as usize);
                             match self.run_query_slice(&repo_root, &target, q, query_limit, budget_tokens, &cfg) {
-                                Ok(xml) => return ok(inline_or_spill(xml)),
+                                Ok(xml) => return ok(inline_or_spill(xml, "xml")),
                                 Err(e) => return err(format!("query slice failed: {e}")),
                             }
                         }
 
                         match slice_to_xml(&repo_root, &target, budget_tokens, &cfg) {
-                            Ok((xml, _meta)) => ok(inline_or_spill(xml)),
+                            Ok((xml, _meta)) => ok(inline_or_spill(xml, "xml")),
                             Err(e) => err(format!("slice failed: {e}")),
                         }
                     }
@@ -381,7 +387,21 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         let target_str = args.get("target_dir").and_then(|v| v.as_str()).unwrap_or(".");
                         let target_dir = resolve_path(&repo_root, target_str);
                         let ignore_gitignore = args.get("ignore_gitignore").and_then(|v| v.as_bool()).unwrap_or(false);
-                        match propagation_checklist(&target_dir, sym, ignore_gitignore) {
+
+                        let aliases: Vec<String> = args
+                            .get("aliases")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str())
+                                    .map(|s| s.trim())
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+
+                        match propagation_checklist(&target_dir, sym, &aliases, ignore_gitignore) {
                             Ok(s) => ok(s),
                             Err(e) => err(format!("propagation_checklist failed: {e}")),
                         }
@@ -465,7 +485,7 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         };
                         let path = args.get("path").and_then(|v| v.as_str());
                         match compare_symbol(&repo_root, &cfg, sym, tag_a, tag_b, path) {
-                            Ok(s) => ok(s),
+                            Ok(s) => ok(inline_or_spill(s, "md")),
                             Err(e) => {
                                 let msg = e.to_string();
                                 if msg.contains("No checkpoint found") || msg.contains("No checkpoints found") {
@@ -480,10 +500,40 @@ Common cause: you saved a checkpoint for a different symbol or under a different
                             }
                         }
                     }
+                    "delete_checkpoint" => {
+                        let repo_root = self.repo_root_from_params(&args);
+                        let cfg = load_config(&repo_root);
+
+                        let symbol_name = args
+                            .get("symbol_name")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty());
+                        let semantic_tag = args
+                            .get("semantic_tag")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| args.get("tag").and_then(|v| v.as_str()))
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty());
+                        let path = args.get("path").and_then(|v| v.as_str());
+
+                        if symbol_name.is_none() && semantic_tag.is_none() {
+                            return err(
+                                "Error: action 'delete_checkpoint' requires at least one filter: 'symbol_name' and/or 'semantic_tag' (or 'tag'). \
+Please call cortex_chronos again with action='delete_checkpoint' and provide symbol_name='<name>' and/or semantic_tag='<tag>'.\n\
+Tip: use cortex_chronos(action=list_checkpoints) first to see what exists.".to_string(),
+                            );
+                        }
+
+                        match crate::chronos::delete_checkpoints(&repo_root, &cfg, symbol_name, semantic_tag, path) {
+                            Ok(s) => ok(s),
+                            Err(e) => err(format!("delete_checkpoints failed: {e}")),
+                        }
+                    }
                     _ => err(format!(
                         "Error: Invalid or missing 'action' for cortex_chronos: received '{action}'. \
                         Choose one of: 'save_checkpoint' (snapshot before edit), 'list_checkpoints' (show all snapshots), \
-                        or 'compare_checkpoint' (AST diff after edit). \
+                        'compare_checkpoint' (AST diff after edit), or 'delete_checkpoint' (remove saved checkpoints). \
                         Example: cortex_chronos with action='save_checkpoint', path='src/main.rs', symbol_name='my_fn', and semantic_tag='pre-refactor'"
                     )),
                 }
@@ -752,27 +802,38 @@ pub fn run_stdio_server() -> Result<()> {
 
 /// Returns `xml` inline when it is small enough for the agent context window.
 /// For larger outputs, writes to a deterministic temp file and returns the path.
-const INLINE_CHARS_THRESHOLD: usize = 8_000;
+const INLINE_CHARS_THRESHOLD: usize = 100_000;
 
-fn inline_or_spill(xml: String) -> String {
-    if xml.len() <= INLINE_CHARS_THRESHOLD {
-        return xml;
+fn inline_or_spill(content: String, extension: &str) -> String {
+    if content.len() <= INLINE_CHARS_THRESHOLD {
+        return content;
     }
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
-    xml.hash(&mut h);
+    content.hash(&mut h);
     let hash = h.finish();
-    let path = std::path::PathBuf::from(format!("/tmp/cortexast_slice_{:x}.xml", hash));
-    match std::fs::write(&path, xml.as_bytes()) {
+    let ext = extension.trim().trim_start_matches('.');
+    let ext = if ext.is_empty() { "txt" } else { ext };
+    let path = std::path::PathBuf::from(format!("/tmp/cortexast_spill_{:x}.{ext}", hash));
+    // Inline preview: keep the flow moving without forcing an immediate read_file.
+    const PREVIEW_CHARS: usize = 2_200;
+    let mut cut = PREVIEW_CHARS.min(content.len());
+    while cut > 0 && !content.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let preview = &content[..cut];
+
+    match std::fs::write(&path, content.as_bytes()) {
         Ok(_) => format!(
-            "📄 Output is large ({} chars, above {INLINE_CHARS_THRESHOLD}-char inline limit).\nWritten to: {}\n\nUse `read_file` tool with that path to read the full content.",
-            xml.len(),
-            path.display()
+            "📄 Output is large ({} chars, above {INLINE_CHARS_THRESHOLD}-char inline limit).\nWritten to: {}\n\nPreview (truncated):\n{}\n\n… (preview truncated; full content is in the file)\n\nUse `read_file` tool with that path to read the full content.",
+            content.len(),
+            path.display(),
+            preview
         ),
         Err(e) => format!(
             "(Output was {} chars — too large for inline, and failed to write to disk: {e})\n",
-            xml.len()
+            content.len()
         ),
     }
 }

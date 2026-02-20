@@ -315,6 +315,15 @@ def main() -> int:
     )
     show(read_res, 60)
 
+    # --- cortex_symbol_analyzer.read_source (batch) ---
+    header("cortex_symbol_analyzer(action=read_source) — batch mode symbol_names")
+    read_batch_res = call_tool(
+        bin_path,
+        "cortex_symbol_analyzer",
+        {"repoPath": repo, "action": "read_source", "path": picked_path, "symbol_names": [picked_symbol]},
+    )
+    show(read_batch_res, 40)
+
     # --- cortex_symbol_analyzer.find_usages ---
     header("cortex_symbol_analyzer(action=find_usages) — picked symbol")
     usages_res = call_tool(
@@ -396,6 +405,20 @@ def main() -> int:
         },
     )
     show(cmp_bad, 40)
+
+    header("cortex_chronos(action=delete_checkpoint) — cleanup QC tags")
+    del_a = call_tool(
+        bin_path,
+        "cortex_chronos",
+        {"repoPath": repo, "action": "delete_checkpoint", "symbol_name": picked_symbol, "semantic_tag": tag_a},
+    )
+    show(del_a, 20)
+    del_b = call_tool(
+        bin_path,
+        "cortex_chronos",
+        {"repoPath": repo, "action": "delete_checkpoint", "symbol_name": picked_symbol, "semantic_tag": tag_b},
+    )
+    show(del_b, 20)
 
     # --- run_diagnostics ---
     header("run_diagnostics — repo root (may return compile errors depending on repo state)")

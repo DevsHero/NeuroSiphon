@@ -20,6 +20,7 @@
 | Save pre-change snapshot | `cortex_chronos` | `save_checkpoint` | `path` + `symbol_name` + `semantic_tag` |
 | List snapshots | `cortex_chronos` | `list_checkpoints` | *(none)* |
 | Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` |
+| Delete old snapshots (housekeeping) | `cortex_chronos` | `delete_checkpoint` | `symbol_name` and/or `semantic_tag` *(optional: `path`)* |
 | Compile/lint diagnostics | `run_diagnostics` | *(none)* | `repoPath` |
 
 **The Autonomous Refactoring Flow (Rails)**
@@ -37,6 +38,10 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
   - `run_diagnostics` immediately after editing
   - `cortex_chronos(action: compare_checkpoint)` to verify semantics (never use `git diff`)
 7. **Cross‑Sync** → `cortex_symbol_analyzer(action: propagation_checklist)` when touching shared types/contracts
+
+**Propagation best practice (Hybrid Omni‑Match):**
+- `propagation_checklist` automatically matches common casing variants of `symbol_name` (PascalCase / camelCase / snake_case).
+- When a symbol is renamed across boundaries (e.g. Rust `TrainingEngineCapabilities` → TS `trainingCaps`), pass `aliases: ["trainingCaps"]` to catch cross-language usage without heavy import tracing.
 
 # MCP Usage Guidelines — ShadowCrawl
 

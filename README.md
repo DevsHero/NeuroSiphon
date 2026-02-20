@@ -49,17 +49,17 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - `target` (**required**) — relative path to file or directory
 - `query` — optional semantic vector search; ranks files by relevance first
 - `budget_tokens` — token budget (default 32 000)
-- **Inline / spill**: output ≤ 8 KB returned inline; larger output written to temp file — use `read_file` to access it
+- **Inline / spill**: output ≤ 8 KB returned inline; larger output is written to a temp file *with an inline preview* — use `read_file` to access the full content
 
 ### 🎯 `cortex_symbol_analyzer` — Symbol Analysis Megatool
 🔥 Always use instead of grep/rg/ag. Four modes via `action`:
 
 **`action: read_source`** — Extracts the exact, full source of any symbol (function, struct, class, const) via AST.
 - `path` (**required**) — source file containing the symbol
-- `symbol_name` (**required**) — target symbol name
-- `symbol_names: ["A","B","C"]` — batch mode: multiple symbols in one call
+- `symbol_name` (**required unless using `symbol_names`**) — target symbol name
+- `symbol_names: ["A","B","C"]` — batch mode: multiple symbols in one call (ignores `symbol_name`)
 
-**`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldInits**.
+**`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldAccesses** / **FieldInits**.
 - `symbol_name` + `target_dir` (**required**)
 
 **`action: blast_radius`** — Shows who calls the function (Incoming) and what the function calls (Outgoing). **Use before any rename, move, or delete.**
@@ -79,6 +79,9 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 **`action: compare_checkpoint`** — Structural diff between two snapshots; ignores whitespace and line-number noise.
 - `symbol_name` + `tag_a` + `tag_b` (**required**)
+
+**`action: delete_checkpoint`** — Deletes checkpoint files from the local store (housekeeping).
+- Provide at least one filter: `symbol_name` and/or `semantic_tag` (or `tag`)
 
 ### 🚨 `run_diagnostics` — Compiler Whisperer
 Auto-detects project type (`cargo check` / `tsc --noEmit`), runs the compiler, maps errors directly to AST source lines. **Run immediately after any code edit.**

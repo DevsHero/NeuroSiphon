@@ -2158,7 +2158,7 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         by_cat.entry(m.category).or_default().push(m);
     }
 
-    let order: [&'static str; 4] = ["Calls", "Type Refs", "Field Inits", "Other"];
+    let order: [&'static str; 5] = ["Calls", "Type Refs", "Field Accesses", "Field Inits", "Other"];
     let total: usize = by_cat.values().map(|v| v.len()).sum();
     let mut out = format!("{} usage(s) of `{symbol_name}` found:\n\n", total);
 
@@ -2194,9 +2194,14 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
 /// Walks `target_dir` (honours `.gitignore`) and performs AST-accurate identifier
 /// matching (no comment/string false positives). Output is grouped by domain to
 /// reduce propagation drop across repos/services.
-pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitignore: bool) -> Result<String> {
+pub fn propagation_checklist(
+    target_dir: &Path,
+    symbol_name: &str,
+    aliases: &[String],
+    ignore_gitignore: bool,
+) -> Result<String> {
     use ignore::WalkBuilder;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
 
     let abs_dir: PathBuf = if target_dir.is_absolute() {
         target_dir.to_path_buf()
@@ -2210,6 +2215,20 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
         .build();
 
     let cfg = language_config();
+
+    // Hybrid Omni-Match Strategy:
+    // - Always match the base symbol name
+    // - Auto-generate casing variants (camelCase, PascalCase, snake_case)
+    // - Merge in explicit aliases (and their casing variants too)
+    let mut omni_names: HashSet<String> = HashSet::new();
+    let base = symbol_name.trim();
+    if !base.is_empty() {
+        omni_names.extend(generate_casing_variants(base));
+    }
+    for a in aliases.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        omni_names.extend(generate_casing_variants(a));
+    }
+
     // rel_path -> (usage_count, unique_line_numbers_1based)
     let mut hits_by_file: BTreeMap<String, (usize, Vec<u32>)> = BTreeMap::new();
 
@@ -2230,8 +2249,9 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
         }
         let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
 
-        // Hot path: substring prefilter.
-        if !source_text.contains(symbol_name) {
+        // Hot path: substring prefilter. Keep it lean: if none of the omni names appear,
+        // don't pay the tree-sitter parse cost.
+        if !omni_names.iter().any(|n| source_text.contains(n)) {
             continue;
         }
 
@@ -2247,7 +2267,7 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
         let root = tree.root_node();
 
         let mut hits: Vec<(u32, &'static str)> = Vec::new();
-        collect_identifier_refs(root, source, symbol_name, &mut hits);
+        collect_identifier_refs_any(root, source, &omni_names, &mut hits);
         if hits.is_empty() {
             continue;
         }
@@ -2304,7 +2324,6 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
     out.push_str(&format!("## 📋 Propagation Checklist for `{}`\n", symbol_name));
     out.push_str("*Review and update these files to ensure cross-service consistency.*\n\n");
 
-    // Deterministic sorting.
     proto.sort_by(|a, b| a.0.cmp(&b.0));
     rust.sort_by(|a, b| a.0.cmp(&b.0));
     ts.sort_by(|a, b| a.0.cmp(&b.0));
@@ -2316,7 +2335,6 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
     let truncated_by_file_limit = std::cell::Cell::new(false);
     let truncated_by_char_limit = std::cell::Cell::new(false);
 
-    // Push text while enforcing a hard maximum length (UTF-8 safe).
     let mut push = |s: &str| -> bool {
         if out.len() >= MAX_CHARS_TOTAL {
             truncated_by_char_limit.set(true);
@@ -2382,7 +2400,6 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
         let _ = push("\n");
     };
 
-    // Logical domain order (stable).
     write_section("📝 Protocol Buffers (Contracts)", &proto);
     write_section("🦀 Rust (Backend/Services)", &rust);
     write_section("🧩 TypeScript (Frontend/UI)", &ts);
@@ -2401,6 +2418,151 @@ pub fn propagation_checklist(target_dir: &Path, symbol_name: &str, ignore_gitign
     }
 
     Ok(out)
+}
+
+fn generate_casing_variants(base_name: &str) -> Vec<String> {
+    use std::collections::HashSet;
+
+    let s = base_name.trim();
+    if s.is_empty() {
+        return Vec::new();
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    let mut words: Vec<String> = Vec::new();
+    let mut cur = String::new();
+
+    let is_delim = |c: char| matches!(c, '_' | '-' | ' ' | '.');
+    for i in 0..chars.len() {
+        let c = chars[i];
+        if is_delim(c) {
+            if !cur.is_empty() {
+                words.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+
+        if !cur.is_empty() {
+            let prev = chars[i.saturating_sub(1)];
+            let next = chars.get(i + 1).copied();
+
+            let boundary =
+                // fooBar
+                (prev.is_lowercase() && c.is_uppercase())
+                // HTTPServer (split before S)
+                || (prev.is_uppercase()
+                    && c.is_uppercase()
+                    && next.map(|n| n.is_lowercase()).unwrap_or(false))
+                // foo2Bar / fooBar2
+                || (prev.is_ascii_digit() && c.is_alphabetic())
+                || (prev.is_alphabetic() && c.is_ascii_digit());
+
+            if boundary {
+                words.push(std::mem::take(&mut cur));
+            }
+        }
+
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+
+    if words.is_empty() {
+        return vec![s.to_string()];
+    }
+
+    let to_pascal_word = |w: &str| -> String {
+        if w.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+            return w.to_string();
+        }
+        let mut it = w.chars();
+        let Some(first) = it.next() else { return String::new() };
+        let mut out = String::new();
+        out.extend(first.to_uppercase());
+        out.push_str(&it.as_str().to_ascii_lowercase());
+        out
+    };
+
+    let pascal = words.iter().map(|w| to_pascal_word(w)).collect::<String>();
+    let snake = words
+        .iter()
+        .map(|w| w.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("_");
+    let camel = {
+        let mut out = String::new();
+        for (idx, w) in words.iter().enumerate() {
+            if idx == 0 {
+                out.push_str(&w.to_ascii_lowercase());
+            } else {
+                out.push_str(&to_pascal_word(w));
+            }
+        }
+        out
+    };
+
+    // Deterministic ordering, de-duped.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for v in [s.to_string(), pascal, camel, snake] {
+        if !v.is_empty() && seen.insert(v.clone()) {
+            out.push(v);
+        }
+    }
+    out
+}
+
+fn collect_identifier_refs_any(
+    node: Node,
+    source: &[u8],
+    symbol_names: &std::collections::HashSet<String>,
+    out: &mut Vec<(u32, &'static str)>,
+) {
+    let kind = node.kind();
+
+    if kind.contains("comment")
+        || matches!(
+            kind,
+            "string"
+                | "string_literal"
+                | "raw_string"
+                | "raw_string_literal"
+                | "interpreted_string_literal"
+                | "char_literal"
+                | "template_string"
+                | "string_fragment"
+                | "heredoc_body"
+                | "regex_pattern"
+        )
+    {
+        return;
+    }
+
+    if node.child_count() == 0 {
+        if matches!(
+            kind,
+            "identifier"
+                | "type_identifier"
+                | "field_identifier"
+                | "property_identifier"
+                | "shorthand_property_identifier"
+                | "shorthand_property_identifier_pattern"
+        ) {
+            let slice = &source[node.start_byte()..node.end_byte()];
+            if let Ok(text) = std::str::from_utf8(slice) {
+                if symbol_names.contains(text) {
+                    out.push((node.start_position().row as u32, usage_category(node)));
+                }
+            }
+        }
+        return;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_identifier_refs_any(child, source, symbol_names, out);
+    }
 }
 
 struct UsageMatch {
@@ -2492,6 +2654,7 @@ fn usage_category(node: Node) -> &'static str {
             "call_expression",
             "call",
             "function_call",
+            "method_call_expression",
             "method_invocation",
             "invocation_expression",
         ],
@@ -2508,6 +2671,29 @@ fn usage_category(node: Node) -> &'static str {
             | "shorthand_property_identifier_pattern"
     ) && has_ancestor_kind(node, &["field_initializer", "property_assignment", "pair"]) {
         return "Field Inits";
+    }
+
+    // Field/member/attribute access chains (e.g. `x.method.alignment`, `obj.foo.bar`, `thing.attr`).
+    // This is distinct from object/struct literal field initializers above.
+    if matches!(
+        kind,
+        "identifier"
+            | "field_identifier"
+            | "property_identifier"
+            | "shorthand_property_identifier"
+            | "shorthand_property_identifier_pattern"
+    ) && has_ancestor_kind(
+        node,
+        &[
+            // Rust
+            "field_expression",
+            // TS/JS
+            "member_expression",
+            // Python
+            "attribute",
+        ],
+    ) {
+        return "Field Accesses";
     }
 
     "Other"

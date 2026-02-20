@@ -79,7 +79,7 @@ impl ServerState {
                     },
                     {
                         "name": "call_hierarchy",
-                        "description": "🕸️ USE BEFORE REFACTORING: Analyzes the Blast Radius. Shows exactly who calls a function (Incoming) and what the function calls (Outgoing). Crucial for preventing breaking changes.",
+                        "description": "🕸️ USE BEFORE ANY FUNCTION RENAME, MOVE, OR DELETE. Analyzes the Blast Radius. Shows exactly who calls a function (Incoming) and what the function calls (Outgoing). Crucial for preventing breaking changes.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -103,7 +103,7 @@ impl ServerState {
                     },
                     {
                         "name": "get_context_slice",
-                        "description": "📦 USE FOR DEEP DIVES: Returns a token-budget-aware XML slice of a directory or file. Skeletonizes all source files (function bodies pruned, imports collapsed). Optionally accepts a semantic `query` to vector-search and return only the most relevant files first. Prefer this over reading raw files when you need multi-file context.",
+                        "description": "📦 USE FOR DEEP DIVES: Returns a token-budget-aware XML slice of a directory or file. Skeletonizes all source files (function bodies pruned, imports collapsed). Optionally accepts a semantic `query` to vector-search and return only the most relevant files first. Prefer this over reading raw files when you need multi-file context. Output is returned INLINE when ≤ 8KB; for larger outputs the content is written to a temp file and the response contains the file path — use read_file to read it.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -118,7 +118,7 @@ impl ServerState {
                     },
                     {
                         "name": "save_checkpoint",
-                        "description": "⏳ Save a safe 'save-state' snapshot of a specific AST symbol before you modify it. Use semantic tags like 'baseline' or 'pre-refactor'.",
+                        "description": "⏳ USE THIS before any non-trivial edit or refactor. Saves a safe 'save-state' snapshot of a specific AST symbol so you can compare_checkpoint after the change. Use semantic tags like 'baseline' or 'pre-refactor'.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -157,7 +157,7 @@ impl ServerState {
                     },
                     {
                         "name": "propagation_checklist",
-                        "description": "🎯 CRITICAL: Use this BEFORE refactoring core types (Proto messages, central structs, API routes). Generates a strict Markdown checklist grouped by language/domain to prevent propagation drop across microservices. Provide either `symbol_name` (new) or `changed_path` (legacy).",
+                        "description": "🎯 CRITICAL: Use this BEFORE refactoring core types (Proto messages, central structs, API routes). Also USE THIS before changing any shared type, struct, or interface — it is strictly better than manually searching usages file-by-file. Generates a strict Markdown checklist grouped by language/domain to prevent propagation drop across microservices. Provide either `symbol_name` (new) or `changed_path` (legacy).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -210,13 +210,13 @@ impl ServerState {
                 if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
                     let query_limit = args.get("query_limit").and_then(|v| v.as_u64()).map(|n| n as usize);
                     match self.run_query_slice(&repo_root, &target, q, query_limit, budget_tokens, &cfg) {
-                        Ok(xml) => return ok(xml),
+                        Ok(xml) => return ok(inline_or_spill(xml)),
                         Err(e) => return err(format!("query slice failed: {e}")),
                     }
                 }
 
                 match slice_to_xml(&repo_root, &target, budget_tokens, &cfg) {
-                    Ok((xml, _meta)) => ok(xml),
+                    Ok((xml, _meta)) => ok(inline_or_spill(xml)),
                     Err(e) => err(format!("slice failed: {e}")),
                 }
             }
@@ -617,4 +617,31 @@ pub fn run_stdio_server() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Returns `xml` inline when it is small enough for the agent context window.
+/// For larger outputs, writes to a deterministic temp file and returns the path.
+const INLINE_CHARS_THRESHOLD: usize = 8_000;
+
+fn inline_or_spill(xml: String) -> String {
+    if xml.len() <= INLINE_CHARS_THRESHOLD {
+        return xml;
+    }
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    xml.hash(&mut h);
+    let hash = h.finish();
+    let path = std::path::PathBuf::from(format!("/tmp/cortexast_slice_{:x}.xml", hash));
+    match std::fs::write(&path, xml.as_bytes()) {
+        Ok(_) => format!(
+            "📄 Output is large ({} chars, above {INLINE_CHARS_THRESHOLD}-char inline limit).\nWritten to: {}\n\nUse `read_file` tool with that path to read the full content.",
+            xml.len(),
+            path.display()
+        ),
+        Err(e) => format!(
+            "(Output was {} chars — too large for inline, and failed to write to disk: {e})\n",
+            xml.len()
+        ),
+    }
 }

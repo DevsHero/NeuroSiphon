@@ -43,23 +43,29 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 - `target_dir` (**required**) — directory to map (use `'.'` for whole repo)
 - `search_filter` — case-insensitive substring, **OR via `|`** (e.g. `"auth|user"`)
 - `ignore_gitignore` — set `true` to include generated / git-ignored files
-- `max_chars` — output cap (hard cap 8 000 chars)
+- `max_chars` — optional output cap (default **15 000**, max **30 000**; clamped to prevent IDE interception)
 
-**`action: deep_slice`** — Token-budget-aware XML slice of a file or directory. Skeletonises all source (bodies pruned, imports collapsed).
+**`action: deep_slice`** — Token-budget-aware XML slice of a file or directory.
 - `target` (**required**) — relative path to file or directory
 - `query` — optional semantic vector search; ranks files by relevance first
 - `budget_tokens` — token budget (default 32 000)
-- **Inline / spill**: output ≤ 8 KB returned inline; larger output is written to a temp file *with an inline preview* — use `read_file` to access the full content
+- `skeleton_only: true` — enforce structural pruning (skeleton output only) regardless of repo config
+- Output safety: server enforces a strict inline limit via `max_chars` (default 15k, max 30k) and **truncates inline** to avoid editor-side "spill" behaviors
 
 ### 🎯 `cortex_symbol_analyzer` — Symbol Analysis Megatool
-🔥 Always use instead of grep/rg/ag. Four modes via `action`:
+🔥 Always use instead of grep/rg/ag. Modes via `action`:
 
 **`action: read_source`** — Extracts the exact, full source of any symbol (function, struct, class, const) via AST.
 - `path` (**required**) — source file containing the symbol
 - `symbol_name` (**required unless using `symbol_names`**) — target symbol name
 - `symbol_names: ["A","B","C"]` — batch mode: multiple symbols in one call (ignores `symbol_name`)
+- `skeleton_only: true` — return signatures/structure only (drastically reduces tokens when you only need the API)
+- `max_chars` — optional output cap (default 15k, max 30k)
 
 **`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldAccesses** / **FieldInits**.
+- `symbol_name` + `target_dir` (**required**)
+
+**`action: find_implementations`** — Finds structs/classes that implement a given trait/interface (Rust `impl Trait for Type`, TS `class X implements Y`).
 - `symbol_name` + `target_dir` (**required**)
 
 **`action: blast_radius`** — Shows who calls the function (Incoming) and what the function calls (Outgoing). **Use before any rename, move, or delete.**
@@ -68,6 +74,7 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 **`action: propagation_checklist`** — Strict Markdown checklist grouped by language/domain (Proto → Rust → TS → Python). **Use before changing any shared type, interface, or API contract.**
 - `symbol_name` (**required**); `changed_path` for legacy contract-file mode
 - `ignore_gitignore: true` — includes generated stubs (gRPC, Protobuf, etc.)
+- `aliases: ["otherName"]` — cross-boundary rename bridges; casing variants are auto-generated
 
 ### ⏳ `cortex_chronos` — Snapshot Megatool (AST Time Machine)
 ⚖️ **NEVER use `git diff` for AI refactors.** Three modes via `action`:
@@ -79,12 +86,16 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 **`action: compare_checkpoint`** — Structural diff between two snapshots; ignores whitespace and line-number noise.
 - `symbol_name` + `tag_a` + `tag_b` (**required**)
+- Magic: set `tag_b="__live__"` to compare `tag_a` against the current filesystem state (**requires `path`**)
 
 **`action: delete_checkpoint`** — Deletes checkpoint files from the local store (housekeeping).
 - Provide at least one filter: `symbol_name` and/or `semantic_tag` (or `tag`)
 
 ### 🚨 `run_diagnostics` — Compiler Whisperer
 Auto-detects project type (`cargo check` / `tsc --noEmit`), runs the compiler, maps errors directly to AST source lines. **Run immediately after any code edit.**
+
+### 🔒 Output safety (`max_chars`)
+All megatools accept an optional `max_chars` (default **15 000**, max **30 000**). The server will **truncate inline** and append an explicit marker when the limit is hit — this prevents VS Code/Cursor-style interception that writes large tool outputs into workspace storage.
 
 
 ---
@@ -172,7 +183,7 @@ See [docs/MCP_SETUP.md](docs/MCP_SETUP.md) for per-client setup instructions.
 
 ---
 
-## � Recommended Agent Rules
+## ✅ Recommended Agent Rules
 
 To maximise CortexAST's effectiveness, add the rules below to your AI assistant's instruction file. This ensures the agent always prefers CortexAST tools over basic shell commands and follows the correct workflow to minimise hallucination and token waste.
 
@@ -181,16 +192,19 @@ To maximise CortexAST's effectiveness, add the rules below to your AI assistant'
 **File:** `.github/copilot-instructions.md`
 
 ```markdown
-## CortexAST Priority Rules (Megatool API v1.5+)
+## CortexAST Priority Rules (Megatool API v2.0+)
 
 - 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
 - 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
+- 🎯 Prefer `skeleton_only: true` for large symbols when you only need the API/signature surface.
 - 🎯 Find all usages → `cortex_symbol_analyzer(action: find_usages)` before changing any symbol signature.
+- 🎯 Find implementors → `cortex_symbol_analyzer(action: find_implementations)` when changing traits/interfaces.
 - 🎯 Measure blast radius → `cortex_symbol_analyzer(action: blast_radius)` BEFORE any rename, move, or delete.
 - 🎯 Cross-boundary propagation → `cortex_symbol_analyzer(action: propagation_checklist)` before changing a shared type/struct/interface.
 - ⏳ Save a snapshot → `cortex_chronos(action: save_checkpoint)` BEFORE any non-trivial refactor.
-- ⏳ Verify a refactor → `cortex_chronos(action: compare_checkpoint)` AFTER editing (NEVER use git diff for this).
+- ⏳ Verify a refactor → `cortex_chronos(action: compare_checkpoint)` AFTER editing (NEVER use git diff for this). Tip: `tag_b='__live__'` compares against the current filesystem state.
 - 🚨 Check for errors → `run_diagnostics` immediately after any code edit.
+- 🔒 Set `max_chars` (default 15000; max 30000) if your client tends to spill large outputs.
 ```
 
 ### Cursor

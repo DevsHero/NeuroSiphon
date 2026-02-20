@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- `cortex_chronos(compare_checkpoint)` supports `tag_b="__live__"` to compare a saved snapshot (`tag_a`) against the current filesystem state (requires `path`).
+- `cortex_symbol_analyzer(action=find_implementations)` to locate Rust/TypeScript implementors of a trait/interface.
+- `cortex_code_explorer(action=deep_slice)` supports `skeleton_only: true` to enforce structural pruning regardless of repo config.
+
+### Changed
+- Output handling: megatool responses are now negotiated via `max_chars` (default 15 000, max 30 000) and truncated inline with an explicit marker to prevent editor-side spill/interception.
+- `cortex_symbol_analyzer(action=read_source)` supports `skeleton_only: true` to return structural signatures only (token-saving mode).
+
+### Fixed
+- Chronos checkpoint path matching is normalized to repo-relative keys (consistent across save/compare/delete), reducing "No checkpoint found" mismatches caused by absolute vs relative path variants.
+
 ## [2.0.0] — Megatool API
 
 ### Breaking Changes (with shims)

@@ -40,29 +40,37 @@ Restart your MCP client.
 
 ## 3) MCP Tools
 
-```
-├─ get_context_slice(target, budget_tokens?, query?, query_limit?, repoPath?)
-│  └─ Returns: token-budget-aware XML slice (skeletonized source)
-├─ map_repo(target_dir, repoPath?)
-│  └─ Returns: compact hierarchical text map of files + public symbols
-├─ read_symbol(path, symbol_name, repoPath?)
-│  └─ Returns: exact full source of a single symbol via AST
-├─ find_usages(target_dir, symbol_name, repoPath?)
-│  └─ Returns: all semantic references (no comment/string noise)
-├─ call_hierarchy(target_dir, symbol_name, repoPath?)
-│  └─ Returns: definition location + outgoing calls + incoming callers
-└─ run_diagnostics(repoPath)
-   └─ Returns: compiler errors pinned to file:line with code context
+CortexAST exposes **4 Megatools** (preferred) with `action` enums.
+Legacy tool names are accepted as compatibility shims but are deprecated.
 
-Chronos (AST Time Machine):
-
-├─ save_checkpoint(path, symbol_name, semantic_tag, repoPath?)
-│  └─ Saves a disk-backed snapshot under `.cortexast/checkpoints/`
-├─ list_checkpoints(repoPath?)
-│  └─ Lists available semantic tags + stored symbols
-└─ compare_checkpoint(symbol_name, tag_a, tag_b, path?, repoPath?)
-   └─ Displays Tag A and Tag B symbol code blocks (no unified diff)
 ```
+Megatools (preferred):
+
+├─ cortex_code_explorer(action, ...)
+│  ├─ action=map_overview(target_dir, search_filter?, max_chars?, ignore_gitignore?, repoPath?)
+│  └─ action=deep_slice(target, budget_tokens?, query?, query_limit?, skeleton_only?, max_chars?, repoPath?)
+│     └─ Returns: token-budget-aware XML slice (optionally skeleton-only)
+
+├─ cortex_symbol_analyzer(action, ...)
+│  ├─ action=read_source(path, symbol_name? | symbol_names?, skeleton_only?, max_chars?, repoPath?)
+│  ├─ action=find_usages(target_dir, symbol_name, max_chars?, repoPath?)
+│  ├─ action=find_implementations(target_dir, symbol_name, max_chars?, repoPath?)
+│  ├─ action=blast_radius(target_dir, symbol_name, max_chars?, repoPath?)
+│  └─ action=propagation_checklist(symbol_name, aliases?, target_dir?, ignore_gitignore?, max_chars?, repoPath?)
+
+├─ cortex_chronos(action, ...)
+│  ├─ action=save_checkpoint(path, symbol_name, semantic_tag, repoPath?)
+│  ├─ action=list_checkpoints(repoPath?)
+│  ├─ action=compare_checkpoint(symbol_name, tag_a, tag_b, path?, repoPath?)
+│  │  └─ Magic: tag_b="__live__" compares tag_a against current filesystem state (requires path)
+│  └─ action=delete_checkpoint(symbol_name?, semantic_tag?/tag?, path?, repoPath?)
+
+└─ run_diagnostics(repoPath, max_chars?)
+  └─ Returns: compiler errors pinned to file:line with code context
+```
+
+Output safety:
+- All tools support `max_chars` (default 15000, max 30000). The server truncates inline and appends a marker to prevent editor-side spill.
 
 ## 4) Optional Repo Config
 

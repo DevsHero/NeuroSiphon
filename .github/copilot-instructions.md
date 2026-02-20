@@ -15,11 +15,12 @@
 | Token-budgeted context slice (XML) | `cortex_code_explorer` | `deep_slice` | `target` |
 | Extract exact symbol source | `cortex_symbol_analyzer` | `read_source` | `path` + `symbol_name` *(or `path` + `symbol_names` for batch)* |
 | Find all usages before signature change | `cortex_symbol_analyzer` | `find_usages` | `symbol_name` + `target_dir` |
+| Find trait/interface implementors | `cortex_symbol_analyzer` | `find_implementations` | `symbol_name` + `target_dir` |
 | Blast radius before rename/move/delete | `cortex_symbol_analyzer` | `blast_radius` | `symbol_name` + `target_dir` |
 | Cross-boundary update checklist | `cortex_symbol_analyzer` | `propagation_checklist` | `symbol_name` *(or legacy `changed_path`)* |
 | Save pre-change snapshot | `cortex_chronos` | `save_checkpoint` | `path` + `symbol_name` + `semantic_tag` |
 | List snapshots | `cortex_chronos` | `list_checkpoints` | *(none)* |
-| Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` |
+| Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` *(use `tag_b="__live__"` + `path` to diff against current state)* |
 | Delete old snapshots (housekeeping) | `cortex_chronos` | `delete_checkpoint` | `symbol_name` and/or `semantic_tag` *(optional: `path`)* |
 | Compile/lint diagnostics | `run_diagnostics` | *(none)* | `repoPath` |
 
@@ -54,8 +55,11 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
 5. **Edit Code** → make the minimal change
 6. **Verify** →
   - `run_diagnostics` immediately after editing
-  - `cortex_chronos(action: compare_checkpoint)` to verify semantics (never use `git diff`)
+  - `cortex_chronos(action: compare_checkpoint)` to verify semantics (never use `git diff`); prefer `tag_b="__live__"` for "before vs now"
 7. **Cross‑Sync** → `cortex_symbol_analyzer(action: propagation_checklist)` when touching shared types/contracts
+
+**Output safety (spill prevention):**
+- If your MCP client tends to offload large tool outputs into workspace storage, explicitly set `max_chars` (default 15000, max 30000) on megatool calls.
 
 **Propagation best practice (Hybrid Omni‑Match):**
 - `propagation_checklist` automatically matches common casing variants of `symbol_name` (PascalCase / camelCase / snake_case).

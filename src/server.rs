@@ -153,7 +153,10 @@ impl ServerState {
                     "map_overview" => {
                         let repo_root = self.repo_root_from_params(&args);
                         let Some(target_str) = args.get("target_dir").and_then(|v| v.as_str()) else {
-                            return err("Missing target_dir for action=map_overview".to_string());
+                            return err(
+                                "Error: action 'map_overview' requires the 'target_dir' parameter (e.g. '.' for the whole repo). \
+                                Please call cortex_code_explorer again with action='map_overview' and target_dir='.'.".to_string()
+                            );
                         };
                         let search_filter = args
                             .get("search_filter")
@@ -198,7 +201,11 @@ Please correct your target_dir (or pass repoPath explicitly).",
                     "deep_slice" => {
                         let repo_root = self.repo_root_from_params(&args);
                         let Some(target_str) = args.get("target").and_then(|v| v.as_str()) else {
-                            return err("Missing target for action=deep_slice".to_string());
+                            return err(
+                                "Error: action 'deep_slice' requires the 'target' parameter \
+                                (relative path to a file or directory within the repo, e.g. 'src'). \
+                                Please call cortex_code_explorer again with action='deep_slice' and target='<path>'.".to_string()
+                            );
                         };
                         let target = PathBuf::from(target_str);
                         let budget_tokens = args.get("budget_tokens").and_then(|v| v.as_u64()).unwrap_or(32_000) as usize;
@@ -219,7 +226,9 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         }
                     }
                     _ => err(format!(
-                        "Invalid action for cortex_code_explorer: '{action}'. Expected one of: map_overview, deep_slice"
+                        "Error: Invalid or missing 'action' for cortex_code_explorer: received '{action}'. \
+                        Choose one of: 'map_overview' (repo structure map) or 'deep_slice' (token-budgeted content slice). \
+                        Example: cortex_code_explorer with action='map_overview' and target_dir='.'"
                     )),
                 }
             }
@@ -229,7 +238,12 @@ Please correct your target_dir (or pass repoPath explicitly).",
                     "read_source" => {
                         let repo_root = self.repo_root_from_params(&args);
                         let Some(p) = args.get("path").and_then(|v| v.as_str()) else {
-                            return err("Missing path for action=read_source".to_string());
+                            return err(
+                                "Error: action 'read_source' requires both 'path' (source file containing the symbol) \
+                                and 'symbol_name'. You omitted 'path'. \
+                                Please call cortex_symbol_analyzer again with action='read_source', path='<file>', and symbol_name='<name>'. \
+                                Tip: use cortex_code_explorer(action=map_overview) first if you are unsure of the file path.".to_string()
+                            );
                         };
                         let abs = resolve_path(&repo_root, p);
 
@@ -244,13 +258,21 @@ Please correct your target_dir (or pass repoPath explicitly).",
                                 }
                             }
                             if out_parts.is_empty() {
-                                return err("Missing symbol_names (non-empty array of strings)".to_string());
+                                return err(
+                                    "Error: action 'read_source' with 'symbol_names' requires a non-empty array of symbol name strings. \
+                                    You provided an empty array or all entries were blank. \
+                                    Example: symbol_names=['process_request', 'handle_error']".to_string()
+                                );
                             }
                             return ok(out_parts.join("\n\n"));
                         }
 
                         let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
-                            return err("Missing symbol_name".to_string());
+                            return err(
+                                "Error: action 'read_source' requires both 'path' and 'symbol_name'. You omitted 'symbol_name'. \
+                                Please call cortex_symbol_analyzer again with action='read_source', path='<file>', and symbol_name='<name>'. \
+                                For batch extraction of multiple symbols from the same file, use symbol_names=['A','B'] instead.".to_string()
+                            );
                         };
                         match read_symbol(&abs, sym) {
                             Ok(s) => ok(s),
@@ -260,10 +282,17 @@ Please correct your target_dir (or pass repoPath explicitly).",
                     "find_usages" => {
                         let repo_root = self.repo_root_from_params(&args);
                         let Some(target_str) = args.get("target_dir").and_then(|v| v.as_str()) else {
-                            return err("Missing target_dir for action=find_usages".to_string());
+                            return err(
+                                "Error: action 'find_usages' requires both 'symbol_name' and 'target_dir'. You omitted 'target_dir'. \
+                                Use '.' to search the entire repo. \
+                                Please call cortex_symbol_analyzer again with action='find_usages', symbol_name='<name>', and target_dir='.'.".to_string()
+                            );
                         };
                         let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
-                            return err("Missing symbol_name".to_string());
+                            return err(
+                                "Error: action 'find_usages' requires both 'symbol_name' and 'target_dir'. You omitted 'symbol_name'. \
+                                Please call cortex_symbol_analyzer again with action='find_usages', symbol_name='<name>', and target_dir='.'.".to_string()
+                            );
                         };
                         let target_dir = resolve_path(&repo_root, target_str);
                         match find_usages(&target_dir, sym) {
@@ -274,10 +303,17 @@ Please correct your target_dir (or pass repoPath explicitly).",
                     "blast_radius" => {
                         let repo_root = self.repo_root_from_params(&args);
                         let Some(target_str) = args.get("target_dir").and_then(|v| v.as_str()) else {
-                            return err("Missing target_dir for action=blast_radius".to_string());
+                            return err(
+                                "Error: action 'blast_radius' requires both 'symbol_name' and 'target_dir'. You omitted 'target_dir'. \
+                                Use '.' to search the entire repo. \
+                                Please call cortex_symbol_analyzer again with action='blast_radius', symbol_name='<name>', and target_dir='.'.".to_string()
+                            );
                         };
                         let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
-                            return err("Missing symbol_name".to_string());
+                            return err(
+                                "Error: action 'blast_radius' requires both 'symbol_name' and 'target_dir'. You omitted 'symbol_name'. \
+                                Please call cortex_symbol_analyzer again with action='blast_radius', symbol_name='<name>', and target_dir='.'.".to_string()
+                            );
                         };
                         let target_dir = resolve_path(&repo_root, target_str);
                         match call_hierarchy(&target_dir, sym) {
@@ -335,7 +371,12 @@ Please correct your target_dir (or pass repoPath explicitly).",
                             .map(|s| s.trim())
                             .filter(|s| !s.is_empty())
                         else {
-                            return err("Missing symbol_name (or provide changed_path for legacy mode)".to_string());
+                            return err(
+                                "Error: action 'propagation_checklist' requires 'symbol_name' (the shared type/struct/interface to trace). \
+                                You omitted 'symbol_name'. \
+                                Please call cortex_symbol_analyzer again with action='propagation_checklist' and symbol_name='<name>'. \
+                                Alternatively, pass 'changed_path' (path to a .proto or contract file) for legacy file-based mode.".to_string()
+                            );
                         };
                         let target_str = args.get("target_dir").and_then(|v| v.as_str()).unwrap_or(".");
                         let target_dir = resolve_path(&repo_root, target_str);
@@ -346,7 +387,10 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         }
                     }
                     _ => err(format!(
-                        "Invalid action for cortex_symbol_analyzer: '{action}'. Expected one of: read_source, find_usages, blast_radius, propagation_checklist"
+                        "Error: Invalid or missing 'action' for cortex_symbol_analyzer: received '{action}'. \
+                        Choose one of: 'read_source' (extract symbol AST), 'find_usages' (trace all call sites), \
+                        'blast_radius' (call hierarchy before rename/delete), or 'propagation_checklist' (cross-module update checklist). \
+                        Example: cortex_symbol_analyzer with action='find_usages', symbol_name='my_fn', and target_dir='.'"
                     )),
                 }
             }
@@ -357,10 +401,20 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         let repo_root = self.repo_root_from_params(&args);
                         let cfg = load_config(&repo_root);
                         let Some(p) = args.get("path").and_then(|v| v.as_str()) else {
-                            return err("Missing path for action=save_checkpoint".to_string());
+                            return err(
+                                "Error: action 'save_checkpoint' requires 'path' (source file), 'symbol_name', and 'semantic_tag'. \
+                                You omitted 'path'. \
+                                Please call cortex_chronos again with action='save_checkpoint', path='<file>', \
+                                symbol_name='<name>', and semantic_tag='pre-refactor' (or any descriptive tag).".to_string()
+                            );
                         };
                         let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
-                            return err("Missing symbol_name for action=save_checkpoint".to_string());
+                            return err(
+                                "Error: action 'save_checkpoint' requires 'path', 'symbol_name', and 'semantic_tag'. \
+                                You omitted 'symbol_name'. \
+                                Please call cortex_chronos again with action='save_checkpoint', path='<file>', \
+                                symbol_name='<name>', and semantic_tag='pre-refactor'.".to_string()
+                            );
                         };
                         let tag = args
                             .get("semantic_tag")
@@ -384,13 +438,30 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         let repo_root = self.repo_root_from_params(&args);
                         let cfg = load_config(&repo_root);
                         let Some(sym) = args.get("symbol_name").and_then(|v| v.as_str()) else {
-                            return err("Missing symbol_name for action=compare_checkpoint".to_string());
+                            return err(
+                                "Error: action 'compare_checkpoint' requires 'symbol_name', 'tag_a', and 'tag_b'. \
+                                You omitted 'symbol_name'. \
+                                Please call cortex_chronos again with action='compare_checkpoint', \
+                                symbol_name='<name>', tag_a='<before-tag>', and tag_b='<after-tag>'. \
+                                Tip: call cortex_chronos(action=list_checkpoints) first to see all available tags.".to_string()
+                            );
                         };
                         let Some(tag_a) = args.get("tag_a").and_then(|v| v.as_str()) else {
-                            return err("Missing tag_a for action=compare_checkpoint".to_string());
+                            return err(
+                                "Error: action 'compare_checkpoint' requires 'symbol_name', 'tag_a', and 'tag_b'. \
+                                You omitted 'tag_a' (the 'before' snapshot tag). \
+                                Please call cortex_chronos again with action='compare_checkpoint', \
+                                symbol_name='<name>', tag_a='<before-tag>', and tag_b='<after-tag>'. \
+                                Tip: call cortex_chronos(action=list_checkpoints) to see all available tags.".to_string()
+                            );
                         };
                         let Some(tag_b) = args.get("tag_b").and_then(|v| v.as_str()) else {
-                            return err("Missing tag_b for action=compare_checkpoint".to_string());
+                            return err(
+                                "Error: action 'compare_checkpoint' requires 'symbol_name', 'tag_a', and 'tag_b'. \
+                                You omitted 'tag_b' (the 'after' snapshot tag). \
+                                Please call cortex_chronos again with action='compare_checkpoint', \
+                                symbol_name='<name>', tag_a='<before-tag>', and tag_b='<after-tag>'.".to_string()
+                            );
                         };
                         let path = args.get("path").and_then(|v| v.as_str());
                         match compare_symbol(&repo_root, &cfg, sym, tag_a, tag_b, path) {
@@ -399,7 +470,10 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         }
                     }
                     _ => err(format!(
-                        "Invalid action for cortex_chronos: '{action}'. Expected one of: save_checkpoint, list_checkpoints, compare_checkpoint"
+                        "Error: Invalid or missing 'action' for cortex_chronos: received '{action}'. \
+                        Choose one of: 'save_checkpoint' (snapshot before edit), 'list_checkpoints' (show all snapshots), \
+                        or 'compare_checkpoint' (AST diff after edit). \
+                        Example: cortex_chronos with action='save_checkpoint', path='src/main.rs', symbol_name='my_fn', and semantic_tag='pre-refactor'"
                     )),
                 }
             }

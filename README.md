@@ -6,7 +6,7 @@ _Giving LLM agents deterministic, AST-level understanding of any codebase — at
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![MCP Ready](https://img.shields.io/badge/MCP-Ready-blue)](https://modelcontextprotocol.io/)
-[![Version](https://img.shields.io/badge/version-2.0.0-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.3-green)](CHANGELOG.md)
 
 ---
 
@@ -32,7 +32,7 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 ---
 
-## 🛠️ MCP Tool Reference (v2.0.0 — Megatool API)
+## 🛠️ MCP Tool Reference (v2.0.3 — Megatool API)
 
 > **Megatool API:** 10 standalone tools consolidated into 4 megatools with `action` enum routing. Old tool names are accepted as compatibility shims but deprecated. Use the new API below.
 

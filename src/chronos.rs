@@ -293,6 +293,7 @@ pub fn delete_checkpoints(
     let mut matched: usize = 0;
     let mut errors: Vec<String> = Vec::new();
     let mut deleted_from: Option<PathBuf> = None;
+    let mut from_legacy = false;
 
     // Search the namespace directory first (if it exists).
     if dir.exists() {
@@ -349,6 +350,7 @@ pub fn delete_checkpoints(
                     Ok(_) => {
                         deleted += 1;
                         deleted_from = Some(parent.clone());
+                        from_legacy = true;
                     }
                     Err(e) => errors.push(format!("- {}: {e}", file_path.display())),
                 }
@@ -377,9 +379,13 @@ pub fn delete_checkpoints(
         .as_deref()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| dir.display().to_string());
+    let source_label = if from_legacy {
+        format!("legacy flat store ({})", location)
+    } else {
+        format!("namespace '{}' ({})", ns, location)
+    };
     let mut out = format!(
-        "Deleted {deleted}/{matched} checkpoint(s) from namespace '{}' ({}).",
-        ns, location
+        "Deleted {deleted}/{matched} checkpoint(s) from {source_label}."
     );
     if !errors.is_empty() {
         out.push_str("\n\nSome deletes failed:\n");

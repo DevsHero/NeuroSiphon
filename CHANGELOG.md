@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - _No unreleased changes yet._
 
+## [2.0.3] — 2026-02-21
+
+### Fixed
+- **Misleading `namespace: 'default'` label in `delete_checkpoint` confirmation when deletions came from the legacy flat store** (`src/chronos.rs`)  
+  When `delete_checkpoint` found no matches in the named-namespace directory and fell back to the legacy flat `checkpoints/` directory, the success message still read  
+  _"Deleted N/M checkpoint(s) from namespace 'default' (path)"_ regardless of where the files actually lived.  
+  Added a `from_legacy` boolean flag; when `true`, the label switches to  
+  _"legacy flat store (path)"_ so agents can tell whether deletion came from a namespace directory or the pre-namespace layout.
+
 ## [2.0.2] — 2026-02-21
 
 ### Fixed

@@ -9,20 +9,20 @@
 
 **Megatool Quick‑Reference**
 
-| Task | Megatool | Action Enum | Required Params |
-|---|---|---|---|
-| Repo overview (files + public symbols) | `cortex_code_explorer` | `map_overview` | `target_dir` (use `.` for whole repo) |
-| Token-budgeted context slice (XML) | `cortex_code_explorer` | `deep_slice` | `target` |
-| Extract exact symbol source | `cortex_symbol_analyzer` | `read_source` | `path` + `symbol_name` *(or `path` + `symbol_names` for batch)* |
-| Find all usages before signature change | `cortex_symbol_analyzer` | `find_usages` | `symbol_name` + `target_dir` |
-| Find trait/interface implementors | `cortex_symbol_analyzer` | `find_implementations` | `symbol_name` + `target_dir` |
-| Blast radius before rename/move/delete | `cortex_symbol_analyzer` | `blast_radius` | `symbol_name` + `target_dir` |
-| Cross-boundary update checklist | `cortex_symbol_analyzer` | `propagation_checklist` | `symbol_name` *(or legacy `changed_path`)* |
-| Save pre-change snapshot | `cortex_chronos` | `save_checkpoint` | `path` + `symbol_name` + `semantic_tag` |
-| List snapshots | `cortex_chronos` | `list_checkpoints` | *(none)* |
-| Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` *(use `tag_b="__live__"` + `path` to diff against current state)* |
-| Delete old snapshots (housekeeping) | `cortex_chronos` | `delete_checkpoint` | `symbol_name` and/or `semantic_tag` *(optional: `path`, `namespace`)* — Automatically searches legacy flat `checkpoints/` if no matches in namespace. |
-| Compile/lint diagnostics | `run_diagnostics` | *(none)* | `repoPath` |
+| Task | Megatool | Action Enum | Required Params | Key Optional Params |
+|---|---|---|---|---|
+| Repo overview (files + public symbols) | `cortex_code_explorer` | `map_overview` | `target_dir` (use `.` for whole repo) | `exclude` (dir-name array), `search_filter`, `max_chars`, `ignore_gitignore` |
+| Token-budgeted context slice (XML) | `cortex_code_explorer` | `deep_slice` | `target` | `exclude` (dir-name array), `budget_tokens`, `skeleton_only`, `query`, `query_limit` |
+| Extract exact symbol source | `cortex_symbol_analyzer` | `read_source` | `path` + `symbol_name` *(or `path` + `symbol_names` for batch)* | `instance_index` (0-based), `skeleton_only` |
+| Find all usages before signature change | `cortex_symbol_analyzer` | `find_usages` | `symbol_name` + `target_dir` | |
+| Find trait/interface implementors | `cortex_symbol_analyzer` | `find_implementations` | `symbol_name` + `target_dir` | |
+| Blast radius before rename/move/delete | `cortex_symbol_analyzer` | `blast_radius` | `symbol_name` + `target_dir` | |
+| Cross-boundary update checklist | `cortex_symbol_analyzer` | `propagation_checklist` | `symbol_name` *(or legacy `changed_path`)* | `aliases` |
+| Save pre-change snapshot | `cortex_chronos` | `save_checkpoint` | `path` + `symbol_name` + `semantic_tag` | `namespace` |
+| List snapshots | `cortex_chronos` | `list_checkpoints` | *(none)* | `namespace` |
+| Compare snapshots (AST diff) | `cortex_chronos` | `compare_checkpoint` | `symbol_name` + `tag_a` + `tag_b` *(use `tag_b="__live__"` + `path` to diff against current state)* | `namespace`, `path` |
+| Delete old snapshots (housekeeping) | `cortex_chronos` | `delete_checkpoint` | `symbol_name` and/or `semantic_tag` *(optional: `path`, `namespace`)* — Automatically searches legacy flat `checkpoints/` if no matches in namespace. | `namespace` |
+| Compile/lint diagnostics | `run_diagnostics` | *(none)* | `repoPath` | |
 
 ## The Ultimate CortexAST Refactoring SOP
 
@@ -61,6 +61,24 @@ Follow this sequence for any non-trivial refactor (especially renames, signature
 **Output safety (spill prevention):**
 - Output is truncated server-side at `max_chars` (default **8000**). VS Code Copilot writes responses larger than ~8 KB to workspace storage — the 8000 default is calibrated to stay below that threshold. Set `max_chars` explicitly (e.g. `3000`) for large-scope queries; increase only if your client handles larger inline output.
 
+**`exclude` best practice (map_overview + deep_slice):**
+- If `map_overview` returns “Massive Directory” or counts look inflated (e.g. `node_modules/`, build outputs, generated code), pass `exclude: ["node_modules", "vendor", "__pycache__", "build", "dist"]`.
+- `exclude` matches directory **base names** (not full paths) and prunes at every depth.
+- Prefer `exclude` over widening `target_dir` — it keeps scans focused and avoids summary-only mode.
+
+**`instance_index` best practice (read_source):**
+- Some files legitimately contain multiple same-named definitions. When that happens, `read_source` will prepend a “Disambiguation: Found N instances…” header.
+- Default is instance 0. To select a different one, pass `instance_index: 1` (second), `2` (third), etc.
+- If your goal is “where is this used?”, use `find_usages` first; if your goal is “show me all defs”, call `read_source` repeatedly with different `instance_index` values.
+
+**`deep_slice` path hint behavior:**
+- If you pass a target that doesn’t exist (e.g. `"orchestrator"` instead of `"orchestrator.rs"`), the server may return “Did you mean one of: …” suggestions. Use one of the suggested paths to avoid a retry loop.
+
+**`compare_checkpoint` identical behavior:**
+- If the two snapshots are identical, Chronos will return a compact “✅ NO STRUCTURAL DIFF” summary instead of printing the full symbol twice.
+**`delete_checkpoint` source label:**
+- When deletions come from a named namespace directory, the confirmation reads: `"Deleted N/M checkpoint(s) from namespace 'name' (path)"`.
+- When no matches exist in the namespace dir and the legacy flat `checkpoints/` directory is searched instead, the label switches to `"legacy flat store (path)"`. This distinction tells you whether the deleted checkpoints were created under the old pre-namespace layout.
 **`repoPath` best practice:**
 - Always pass `repoPath` explicitly on every tool call (e.g. `repoPath="/Users/me/project"`) when you know the path. Without it, the server uses the root established by the MCP `initialize` handshake.
 - **CRITICAL Safeguard:** For safety, if CortexAST resolves to a "dead root" (OS root or Home directory), it returns a **CRITICAL error** instead of proceeding. You MUST catch this and provide the correct `repoPath`.
@@ -89,11 +107,16 @@ the same efficient, hallucination-resistant research process.
 ## Shadowcrawl Priority Rules
 
 ### 1. Memory Before Search (mandatory — NEVER skip)
-- **ALWAYS** call `memory_search` BEFORE calling `web_search`, `web_search_json`, **or** `web_fetch`
+- **ALWAYS** call `research_history` BEFORE calling `search_web`, `search_structured`, **or** `scrape_url`
 - If a result is returned with similarity score ≥ 0.60, use the cached data directly
-  and skip the live fetch entirely
-- Only proceed to a fresh live search when memory returns no relevant hit
+  and skip the live fetch entirely **ONLY IF** it passes the cache-quality guard below
+- Only proceed to a fresh live search/fetch when `research_history` returns no relevant hit
 - This rule applies to EVERY research cycle, including retries and follow-up fetches
+
+**Cache-quality guard (mandatory):**
+- If the cached entry indicates `word_count < 50` (or similarly sparse content), treat it as a **low-quality scrape** and DO NOT skip a live fetch.
+- If the cached entry contains warnings that imply placeholder/blocked/sparse content (e.g. `placeholder_page`, `short_content`, `content_restricted`, `low_extraction_score`), treat it as **low-quality** and DO NOT skip a live fetch.
+- Canonical example: `https://crates.io/crates/{name}` is often JS-rendered and can return a tiny placeholder. For Rust crates, prefer a fresh fetch on `https://docs.rs/crate/{name}/latest` (server-rendered) when cache looks sparse.
 
 ### 1a. Dynamic Parameters — Always Tune for the Task (mandatory)
 - **`max_chars` controls the TOTAL serialized output payload**, not just the text field.
@@ -110,9 +133,10 @@ the same efficient, hallucination-resistant research process.
   | `placeholder_word_threshold` | 10 | Tune for JS-heavy pages |
 
 ### 2. Prefer `web_search_json` Over `web_search` + `web_fetch`
-- `web_search_json` combines search + pre-scraped content summaries in a **single call**
-- Use `web_search_json` as the **default first step** for any research task
-- Only fall back to `web_search` (without content) when you specifically need raw URLs only
+- `search_structured` combines search + pre-scraped content summaries in a **single call**
+- Use `search_structured` as the **default first step** for any research task
+- Only fall back to `search_web` (without content) when you specifically need raw URLs only
+- For private/internal/unlisted tools that won’t be indexed publicly: skip search and go directly to `scrape_url` on the known repo/docs URL (if you have it).
 
 ### 3. Use `web_fetch` with Noise Reduction for Documentation Pages
 - For documentation, article, or tutorial pages always set:
@@ -125,17 +149,17 @@ the same efficient, hallucination-resistant research process.
 - Token savings are typically 60–80 % compared to raw text output
 - If you see `clean_json_truncated` in warnings, increase `max_chars` (the tool clips large pages to prevent output spilling).
 - Note: semantic shaving intentionally bypasses when `word_count < 200` (short pages are returned whole).
-- **Raw file auto-detection**: when the URL ends in `.md`, `.mdx`, `.rst`, `.txt`, `.csv`, `.toml`, `.yaml`, or `.yml`, `clean_json` mode **automatically skips the HTML extraction pipeline** and returns the raw content directly — no duplicate frontmatter, no noise. The response will contain a `raw_markdown_url` warning. To read a raw GitHub file, prefer `web_fetch(output_format: "text")` for prose or `web_fetch(output_format: "clean_json")` for structured paragraphs.
+- **Raw file auto-detection**: when the URL ends in `.md`, `.mdx`, `.rst`, `.txt`, `.csv`, `.toml`, `.yaml`, or `.yml`, `clean_json` mode **automatically skips the HTML extraction pipeline** and returns the raw content directly — no duplicate frontmatter, no noise. The response will contain a `raw_markdown_url` warning. To read a raw GitHub file, prefer `scrape_url(output_format: "text")` for prose or `scrape_url(output_format: "clean_json")` for structured paragraphs.
 
 ### 4. Rotate Proxy on First Block Signal (mandatory)
-- If `web_fetch` or `web_search` returns **403 / 429 / rate-limit / IP-block**:
-  1. Immediately call `proxy_control` with `action: "grab"`
+- If `scrape_url` or `search_web` returns **403 / 429 / rate-limit / IP-block**:
+  1. Immediately call `proxy_manager` with `action: "grab"`
   2. Retry the failed call with `use_proxy: true`
-- Do NOT retry the same call without rotating first; do NOT escalate to `hitl_web_fetch`
+- Do NOT retry the same call without rotating first; do NOT escalate to `non_robot_search`
   until proxy rotation has also failed
 
 ### 4a. Auto-Escalation on Low Confidence (mandatory — no repeat prompt)
-- If `web_fetch` returns `confidence < 0.3` OR `extraction_score < 0.4` in the response:
+- If `scrape_url` returns `confidence < 0.3` OR `extraction_score < 0.4` in the response:
   1. **First**: retry with `quality_mode: "aggressive"` (triggers full CDP browser rendering)
   2. **If still failing**: automatically escalate to `visual_scout` to screenshot the page
   3. **If auth-wall confirmed**: escalate to `human_auth_session` WITHOUT waiting for further

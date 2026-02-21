@@ -116,6 +116,7 @@ the same efficient, hallucination-resistant research process.
 **Cache-quality guard (mandatory):**
 - If the cached entry indicates `word_count < 50` (or similarly sparse content), treat it as a **low-quality scrape** and DO NOT skip a live fetch.
 - If the cached entry contains warnings that imply placeholder/blocked/sparse content (e.g. `placeholder_page`, `short_content`, `content_restricted`, `low_extraction_score`), treat it as **low-quality** and DO NOT skip a live fetch.
+- If the cached entry has `entry_type == "search"` (a search-index summary, not a page scrape), **do NOT treat a similarity ≥ 0.60 hit as a reason to skip `scrape_url`**. Search entries carry no per-page `word_count` metadata — always follow up with a fresh `scrape_url` on the top result URL.
 - Canonical example: `https://crates.io/crates/{name}` is often JS-rendered and can return a tiny placeholder. For Rust crates, prefer a fresh fetch on `https://docs.rs/crate/{name}/latest` (server-rendered) when cache looks sparse.
 
 ### 1a. Dynamic Parameters — Always Tune for the Task (mandatory)
@@ -221,8 +222,11 @@ Input constraint:
 Question / research task
         │
         ▼
-research_history ──► hit (≥ 0.60)? ──► use cached result, STOP
-        │ miss
+research_history ──► hit (≥ 0.60)? ──► cache-quality guard:
+        │ miss            │  entry_type=="search"? ──► do NOT skip scrape_url
+        │                 │  word_count < 50 or placeholder warnings? ──► do NOT skip
+        │                 └──► quality OK? ──► use cached result, STOP
+        │
         ▼
 search_structured ──► enough content? ──► use it, STOP
         │ need deeper page

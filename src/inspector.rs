@@ -2755,6 +2755,91 @@ pub fn propagation_checklist(
         }
     }
 
+    // --- Tauri Bridge Detection (second pass) ---
+    // Detects two Tauri-specific patterns missed by pure AST identifier matching:
+    //   1. Rust files with `#[tauri::command]` attribute that reference the symbol
+    //      (the macro generates a JS-callable name that won't appear as an identifier ref)
+    //   2. TypeScript/JS files calling `invoke("symbol_name_variant", ...)` — frontend bridge
+    let mut tauri_cmds: Vec<(String, usize, Vec<u32>)> = Vec::new();
+    {
+        let walker_tauri = WalkBuilder::new(&abs_dir)
+            .standard_filters(!ignore_gitignore)
+            .hidden(true)
+            .build();
+
+        for entry_result in walker_tauri {
+            let Ok(entry) = entry_result else { continue };
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let is_rust = ext == "rs";
+            let is_ts = matches!(ext.as_str(), "ts" | "tsx" | "js" | "jsx");
+            if !is_rust && !is_ts {
+                continue;
+            }
+            let Ok(raw) = std::fs::read(path) else { continue };
+            if raw.contains(&0u8) { continue; }
+            let Ok(source_text) = std::str::from_utf8(&raw) else { continue };
+
+            let rel = path
+                .strip_prefix(&abs_dir)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| path.to_string_lossy().replace('\\', "/"));
+
+            if is_rust {
+                // Detect: file has `#[tauri::command]` (or `#[command]`) AND references symbol.
+                let has_tauri_attr = source_text.contains("#[tauri::command]")
+                    || source_text.contains("#[command]");
+                if !has_tauri_attr { continue; }
+                if !omni_names.iter().any(|n| source_text.contains(n.as_str())) {
+                    continue;
+                }
+                // Collect line numbers of each tauri::command attribute occurrence.
+                let cmd_lines: Vec<u32> = source_text
+                    .lines()
+                    .enumerate()
+                    .filter_map(|(i, line)| {
+                        if line.contains("#[tauri::command]") || line.contains("#[command]") {
+                            Some(i as u32 + 1)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                let count = cmd_lines.len();
+                if count > 0 {
+                    tauri_cmds.push((format!("[Rust #[tauri::command]] {rel}"), count, cmd_lines));
+                }
+            } else {
+                // Detect: `invoke("symbol_name_variant", ...)` in TS/JS frontend files.
+                let invoke_lines: Vec<u32> = source_text
+                    .lines()
+                    .enumerate()
+                    .filter_map(|(i, line)| {
+                        let lc = line.to_ascii_lowercase();
+                        if lc.contains("invoke(")
+                            && omni_names.iter().any(|n| line.contains(n.as_str()))
+                        {
+                            Some(i as u32 + 1)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !invoke_lines.is_empty() {
+                    let count = invoke_lines.len();
+                    tauri_cmds.push((format!("[TS invoke()] {rel}"), count, invoke_lines));
+                }
+            }
+        }
+    }
+
     // Blast radius guardrails (hard caps): prevent token explosions.
     const MAX_CHECKLIST_FILES: usize = 50;
     const MAX_CHARS_TOTAL: usize = 8_000;
@@ -2769,10 +2854,11 @@ pub fn propagation_checklist(
     proto.sort_by(|a, b| a.0.cmp(&b.0));
     rust.sort_by(|a, b| a.0.cmp(&b.0));
     ts.sort_by(|a, b| a.0.cmp(&b.0));
+    tauri_cmds.sort_by(|a, b| a.0.cmp(&b.0));
     py.sort_by(|a, b| a.0.cmp(&b.0));
     other.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let total_files_affected = proto.len() + rust.len() + ts.len() + py.len() + other.len();
+    let total_files_affected = proto.len() + rust.len() + ts.len() + tauri_cmds.len() + py.len() + other.len();
     let mut total_files_printed: usize = 0;
     let truncated_by_file_limit = std::cell::Cell::new(false);
     let truncated_by_char_limit = std::cell::Cell::new(false);
@@ -2845,6 +2931,7 @@ pub fn propagation_checklist(
     write_section("📝 Protocol Buffers (Contracts)", &proto);
     write_section("🦀 Rust (Backend/Services)", &rust);
     write_section("🧩 TypeScript (Frontend/UI)", &ts);
+    write_section("⚡ Tauri Commands (Rust → Frontend Bridge)", &tauri_cmds);
     write_section("🐍 Python (Scripts/MLX)", &py);
     write_section("📦 Other Definitions", &other);
 
@@ -2855,7 +2942,7 @@ pub fn propagation_checklist(
         ));
     }
 
-    if proto.is_empty() && rust.is_empty() && ts.is_empty() && py.is_empty() && other.is_empty() {
+    if proto.is_empty() && rust.is_empty() && ts.is_empty() && tauri_cmds.is_empty() && py.is_empty() && other.is_empty() {
         out.push_str(&format!(
             "No AST-accurate usages found under {}.\n",
             abs_dir.display()

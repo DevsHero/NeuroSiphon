@@ -3,19 +3,41 @@
 **The AI-Native Code Intelligence Backend. Extract the Signal, Discard the Noise.**  
 _Giving LLM agents deterministic, AST-level understanding of any codebase — at nuclear token efficiency._
 
+[![CortexAST](https://img.shields.io/badge/Repo-CortexAST-blue?style=for-the-badge&logo=github)](https://github.com/DevsHero/CortexAST)
+[![CortexSync](https://img.shields.io/badge/Repo-CortexSync-orange?style=for-the-badge&logo=github)](https://github.com/DevsHero/CortexSync)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange)](https://www.rust-lang.org/)
 [![MCP Ready](https://img.shields.io/badge/MCP-Ready-blue)](https://modelcontextprotocol.io/)
-[![Version](https://img.shields.io/badge/version-2.0.3-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.0.4-green)](CHANGELOG.md)
 
 ---
 
-## ⚡ Why CortexAST
+## ⚡ Why CortexAST?
 
 Most AI coding agents rely on tools built for *human eyeballs* — `cat`, `grep`, `tree`, `git diff`. For an LLM these are toxic: they flood the context window with whitespace, comments, full file dumps, and force the agent into "amnesia" from pagination.
 
 **CortexAST is a sensory system built strictly for AI brains.**  
-Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rust, it gives agents a deterministic, high-fidelity understanding of entire codebases — cutting token usage by up to 90 % while preserving 100 % of the architectural logic.
+Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rust, it gives agents a deterministic, high-fidelity understanding of entire codebases — cutting token usage by up to **90%** while preserving 100% of the architectural logic.
+
+### 🛡️ The Reader/Writer Symbiosis
+CortexAST (The Reader) works hand-in-hand with **[CortexSync](https://github.com/DevsHero/CortexSync)** (The Writer). CortexSync embeds your real-time agent telemetry into a journal that CortexAST then retrieves via `cortex_memory_retriever`, providing **Persistent Cross-Session Memory.**
+
+---
+
+## 🚀 Key Features
+
+### 1. Kill Massive `.cursorrules` (Micro-Bootloader)
+Tired of hit-and-miss results with a 5,000-line `.cursorrules` file? Use the **Micro-Bootloader** approach:
+- Keep a **tiny instruction rule** telling the agent to use CortexAST.
+- **Dynamic Retrieval:** The agent dynamically pulls documentation, history, and rules by calling CortexAST tools like `cortex_memory_retriever` as needed.
+- **Result:** Drastic token savings and much higher completion accuracy.
+
+### 2. 3-Tier Rule Engine
+Manage enterprise-grade AI coding rules across three distinct levels:
+- **Global Tier (`~/.cortexast/global_rules.yml`):** Rules that apply to *you* across all projects.
+- **Team/Cluster Tier (`~/.cortexast/cluster/`):** Rules synced across your internal network for team-wide standards.
+- **Project Tier (`.cortexast.json`):** Overrides and custom logic for the specific codebase you’re working on.
 
 ---
 
@@ -32,7 +54,7 @@ Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rus
 
 ---
 
-## 🛠️ MCP Tool Reference (v2.0.3 — Megatool API)
+## 🛠️ MCP Tool Reference (v2.0.4 — Megatool API)
 
 > **Megatool API:** 10 standalone tools consolidated into 4 megatools with `action` enum routing. Old tool names are accepted as compatibility shims but deprecated. Use the new API below.
 
@@ -232,7 +254,7 @@ globs: ["**/*"]
 alwaysApply: true
 ---
 
-## CortexAST Priority Rules (Megatool API v1.5+)
+## CortexAST Priority Rules (Megatool API v2.0.4+)
 
 - 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
 - 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
@@ -249,7 +271,7 @@ alwaysApply: true
 **File:** `.windsurfrules`
 
 ```markdown
-## CortexAST Priority Rules (Megatool API v1.5+)
+## CortexAST Priority Rules (Megatool API v2.0.4+)
 
 - 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
 - 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
@@ -266,7 +288,7 @@ alwaysApply: true
 **File:** `.clinerules`
 
 ```markdown
-## CortexAST Priority Rules (Megatool API v1.5+)
+## CortexAST Priority Rules (Megatool API v2.0.4+)
 
 - 🔍 Explore repos/files → `cortex_code_explorer(action: map_overview)` or `(action: deep_slice)`. NEVER use ls/tree/find/cat.
 - 🎯 Look up a symbol → `cortex_symbol_analyzer(action: read_source)`. NEVER use grep/rg.
@@ -283,7 +305,7 @@ alwaysApply: true
 Add to `claude_desktop_config.json` → `systemPrompt`:
 
 ```
-CortexAST Priority Rules (Megatool API v1.5+):
+CortexAST Priority Rules (Megatool API v2.0.4+):
 - Explore repos/files → cortex_code_explorer with action: map_overview (structure) or action: deep_slice (content). NEVER use ls/tree/find/cat.
 - Look up a symbol → cortex_symbol_analyzer with action: read_source. NEVER use grep/rg.
 - Find all usages → cortex_symbol_analyzer with action: find_usages before changing any symbol signature.

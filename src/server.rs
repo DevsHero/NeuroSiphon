@@ -237,7 +237,7 @@ impl ServerState {
                                 "action": {
                                     "type": "string",
                                     "enum": ["map_overview", "deep_slice"],
-                                    "description": "Required — chooses the exploration mode.\n• `map_overview` — Returns a condensed bird's-eye map of all files and public symbols in a directory. Requires `target_dir` (use '.' for whole repo). Optional: `search_filter`, `max_chars`, `ignore_gitignore`, `exclude` (array of dir names to skip). Returns minimal tokens even for large repos — run this first on any unfamiliar codebase.\n• `deep_slice` — Returns a token-budget-aware XML slice of a file or directory with function bodies pruned to skeletons. Requires `target`. Optional: `budget_tokens` (default 32000), `skeleton_only`, `query`, `query_limit`, `exclude` (array of dir names to skip). When `query` is set, only the most relevant files are included."
+                                    "description": "Required — chooses the exploration mode.\n• `map_overview` — Returns a condensed bird's-eye map of all files and public symbols in a directory. Requires `target_dir` (use '.' for whole repo). Optional: `search_filter`, `max_chars`, `ignore_gitignore`, `exclude` (array of dir names to skip). Returns minimal tokens even for large repos — run this first on any unfamiliar codebase.\n• `deep_slice` — Returns a token-budget-aware XML slice of a file or directory with function bodies pruned to skeletons. Requires `target`. Optional: `budget_tokens` (default 32000), `skeleton_only`, `query`, `query_limit`, `exclude` (array of dir names to skip), `single_file` (bool — skip vector search entirely and return only target), `only_dir` (restrict semantic query to this subdirectory). When `query` is set, only the most relevant files are included. Set `single_file=true` when target is a specific file you want exclusively, without cross-file spill."
                                 },
                                 "repoPath": { "type": "string", "description": "Optional absolute path to the repo root (defaults to current working directory)." },
 
@@ -255,7 +255,9 @@ impl ServerState {
                                 "budget_tokens": { "type": "integer", "exclusiveMinimum": 0, "description": "(deep_slice) Token budget (default 32000)." },
                                 "skeleton_only": { "type": "boolean", "description": "(deep_slice) If true, enforces structural pruning (skeleton output only) regardless of config." },
                                 "query": { "type": "string", "description": "(deep_slice) Optional semantic query for vector-ranked slicing." },
-                                "query_limit": { "type": "integer", "description": "(deep_slice) Optional max files in query mode." }
+                                "query_limit": { "type": "integer", "description": "(deep_slice) Optional max files in query mode." },
+                                "single_file": { "type": "boolean", "description": "(deep_slice) When true, skips all vector search and returns only the exact target file/dir. Use when target is a specific file you want exclusively — prevents semantic cross-file spill. Takes priority over `query`." },
+                                "only_dir": { "type": "string", "description": "(deep_slice query mode) Restrict semantic vector search to this subdirectory only. Pass a path relative to repoPath. Prevents cross-module spill in polyrepo / microservice codebases — only files inside this directory are candidates for query-based retrieval." }
                             },
                             "required": ["action"]
                         }
@@ -269,13 +271,14 @@ impl ServerState {
                                 "action": {
                                     "type": "string",
                                     "enum": ["read_source", "find_usages", "find_implementations", "blast_radius", "propagation_checklist"],
-                                    "description": "Required — selects the analysis operation.\n• `read_source` — Extracts the exact full source of a named symbol (function, struct, class, method, variable) via AST from a specific file. Faster and more accurate than cat + manual scanning; zero regex ambiguity. Supports batch extraction: provide `symbol_names` array to fetch multiple symbols in one call. Requires `path` (source file) and `symbol_name`.\n• `find_usages` — Finds all semantic usages (calls, type references, field initializations) of a symbol across a workspace directory. Categorizes by usage type to reduce cognitive load. Requires `symbol_name` and `target_dir`.\n• `find_implementations` — Finds structs/classes that implement a given trait/interface across the workspace. Requires `symbol_name` and `target_dir`.\n• `blast_radius` — Analyzes the full call hierarchy: shows who calls this function (incoming) and what the function itself calls (outgoing). Run this BEFORE every rename, move, or delete to understand true blast radius. Requires `symbol_name` and `target_dir`.\n• `propagation_checklist` — Generates a strict Markdown checklist of all places a symbol is used, grouped by language and domain, ensuring no cross-module update is missed. Requires `symbol_name`; use `changed_path` for legacy contract-file (e.g. .proto) mode."
+                                    "description": "Required — selects the analysis operation.\n• `read_source` — Extracts the exact full source of a named symbol (function, struct, class, method, variable) via AST from a specific file. Faster and more accurate than cat + manual scanning; zero regex ambiguity. Supports batch extraction: provide `symbol_names` array to fetch multiple symbols in one call. Requires `path` (source file) and `symbol_name`.\n• `find_usages` — Finds all semantic usages (calls, type references, field initializations) of a symbol across a workspace directory. Categorizes by usage type to reduce cognitive load. Requires `symbol_name` and `target_dir`.\n• `find_implementations` — Finds structs/classes that implement a given trait/interface across the workspace. Requires `symbol_name` and `target_dir`.\n• `blast_radius` — Analyzes the full call hierarchy: shows who calls this function (incoming) and what the function itself calls (outgoing). Run this BEFORE every rename, move, or delete to understand true blast radius. Requires `symbol_name` and `target_dir`.\n• `propagation_checklist` — Generates a strict Markdown checklist of all places a symbol is used, grouped by language and domain (including ⚡ Tauri Commands bridge detection), ensuring no cross-module update is missed. Requires `symbol_name`; use `changed_path` for legacy contract-file (e.g. .proto) mode. Use `only_dir` to scope to a single microservice in polyrepo setups."
                                 },
                                 "repoPath": { "type": "string", "description": "Optional absolute path to the repo root." },
                                 "symbol_name": { "type": "string", "description": "Target symbol. Avoid regex or plural words (e.g. use 'auth', 'convert_request')." },
                                 "target_dir": { "type": "string", "description": "Scope directory (use '.' for entire repo). Required for find_usages/blast_radius; optional for propagation_checklist (defaults '.')." },
                                 "ignore_gitignore": { "type": "boolean", "description": "(propagation_checklist) Include generated / git-ignored stubs." },
                                 "max_chars": { "type": "integer", "description": "Optional: Limit output length. Default 8000 (safe for VS Code Copilot inline). Raise if your client handles larger inline output." },
+                                "only_dir": { "type": "string", "description": "(propagation_checklist) Restrict scan to this subdirectory only. Overrides `target_dir` when provided. Ideal for polyrepo / microservice workspaces — pass the service root (e.g. 'services/auth') to scope the checklist to that service without changing `target_dir` semantics." },
 
                                 "aliases": {
                                     "type": "array",
@@ -365,7 +368,7 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_get_rules",
-                        "description": "📜 3-TIER RULE ENGINE — Deep-merges YAML rule files from Global (~/.cortexast/global_rules.yml), Team (~/.cortexast/cluster/{team_id}_rules.yml), and Project (.cortex_rules.yml) tiers. Team ID is sourced from .cortexast.json in the project root. Scalars follow last-write-wins (Project > Team > Global); arrays are unioned. Returns the merged rules as JSON.",
+                        "description": "CRITICAL: Always call this tool BEFORE taking any action in a new session. Returns dynamically merged AI rules from three tiers: Global (~/.cortexast/global_rules.yml), Team (~/.cortexast/cluster/{team_id}_rules.yml via enable_sync in .cortexast.json), and Project (.cortex_rules.yml). Scalars: Project > Team > Global. Arrays: union. Returns {\"status\":\"no_rules_found\"} if no rule files exist.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -553,12 +556,26 @@ Please correct your target_dir (or pass repoPath explicitly).",
                             cfg.scan.exclude_dir_names.extend(extra);
                         }
 
-                        // Optional vector search query.
-                        if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                            let query_limit = args.get("query_limit").and_then(|v| v.as_u64()).map(|n| n as usize);
-                            match self.run_query_slice(&repo_root, &target, q, query_limit, budget_tokens, skeleton_only, &cfg) {
-                                Ok(xml) => return ok(xml),
-                                Err(e) => return err(format!("query slice failed: {e}")),
+                        // `single_file=true` bypasses all vector search — returns exactly the
+                        // target file/dir without any semantic cross-file expansion.
+                        let single_file = args.get("single_file").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                        // `only_dir` scopes vector-search candidates to a subdirectory (poly-repo
+                        // support). When combined with `query=`, prevents cross-module spill.
+                        let only_dir_path: Option<PathBuf> = args
+                            .get("only_dir")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| resolve_path(&repo_root, s));
+
+                        // Optional vector search query (skipped when single_file=true).
+                        if !single_file {
+                            if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+                                let query_limit = args.get("query_limit").and_then(|v| v.as_u64()).map(|n| n as usize);
+                                match self.run_query_slice(&repo_root, &target, only_dir_path.as_deref(), q, query_limit, budget_tokens, skeleton_only, &cfg) {
+                                    Ok(xml) => return ok(xml),
+                                    Err(e) => return err(format!("query slice failed: {e}")),
+                                }
                             }
                         }
 
@@ -751,6 +768,18 @@ Please correct your target_dir (or pass repoPath explicitly).",
                         let target_dir = resolve_path(&repo_root, target_str);
                         let ignore_gitignore = args.get("ignore_gitignore").and_then(|v| v.as_bool()).unwrap_or(false);
 
+                        // `only_dir` overrides `target_dir` — scopes scan to a single microservice
+                        // directory in poly-repo setups without changing the default API surface.
+                        let scan_dir = if let Some(od) = args
+                            .get("only_dir")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            resolve_path(&repo_root, od)
+                        } else {
+                            target_dir
+                        };
+
                         let aliases: Vec<String> = args
                             .get("aliases")
                             .and_then(|v| v.as_array())
@@ -764,7 +793,7 @@ Please correct your target_dir (or pass repoPath explicitly).",
                             })
                             .unwrap_or_default();
 
-                        match propagation_checklist(&target_dir, sym, &aliases, ignore_gitignore) {
+                        match propagation_checklist(&scan_dir, sym, &aliases, ignore_gitignore) {
                             Ok(s) => ok(s),
                             Err(e) => err(format!("propagation_checklist failed: {e}")),
                         }
@@ -1168,6 +1197,7 @@ Call cortex_chronos with action='list_checkpoints' first to see what exists.".to
         &mut self,
         repo_root: &std::path::Path,
         target: &std::path::Path,
+        only_dir: Option<&std::path::Path>,
         query: &str,
         query_limit: Option<usize>,
         budget_tokens: usize,
@@ -1247,10 +1277,37 @@ Call cortex_chronos with action='list_checkpoints' first to see what exists.".to
 
         let rt = tokio::runtime::Runtime::new()?;
         let q_owned = query.to_string();
-        let rel_paths: Vec<String> = rt.block_on(async move {
+        let mut rel_paths: Vec<String> = rt.block_on(async move {
             let _ = index.index_jobs(&jobs, || {}).await;
             index.search(&q_owned, limit).await.unwrap_or_default()
         });
+
+        // Scope results to `only_dir` when provided, or auto-scope to the target's
+        // directory when target is a file — prevents cross-module semantic spill in
+        // poly-repo / microservice codebases ("goes wide" issue).
+        let scope_prefix: Option<String> = only_dir
+            .map(|p| {
+                let rel = p.strip_prefix(repo_root).unwrap_or(p);
+                let s = rel.to_string_lossy().replace('\\', "/");
+                if s.is_empty() { None } else { Some(s) }
+            })
+            .unwrap_or_else(|| {
+                // Auto-scope to target directory when target is a specific file.
+                if target.is_file() {
+                    let parent = target.parent().unwrap_or(target);
+                    let rel = parent.strip_prefix(repo_root).unwrap_or(parent);
+                    let s = rel.to_string_lossy().replace('\\', "/");
+                    if s.is_empty() { None } else { Some(s) }
+                } else {
+                    let rel = target.strip_prefix(repo_root).unwrap_or(target);
+                    let s = rel.to_string_lossy().replace('\\', "/");
+                    if s.is_empty() { None } else { Some(s) }
+                }
+            });
+
+        if let Some(ref prefix) = scope_prefix {
+            rel_paths.retain(|p| p.starts_with(prefix.as_str()));
+        }
 
         let (xml, _meta) = if rel_paths.is_empty() {
             slice_to_xml(repo_root, target, budget_tokens, cfg, skeleton_only)?

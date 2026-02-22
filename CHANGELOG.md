@@ -9,6 +9,80 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - _No unreleased changes yet._
 
+## [2.0.4] — 2025-07-22
+
+### Fixed
+- **`deep_slice + query=` "Goes wide" bug** (`src/server.rs` — `run_query_slice`)  
+  Vector search results were previously sourced from the entire `repo_root`, causing
+  semantic spill into unrelated modules (e.g., pulling `training.proto` and `main.rs`
+  alongside a specific `src/auth.rs` target). Results are now auto-scoped:  
+  - When `target` is a **file** → results restricted to the file's parent directory.  
+  - When `target` is a **directory** → results restricted to that directory subtree.  
+  - When `only_dir` is passed explicitly → results restricted to `only_dir`.
+
+- **`propagation_checklist` "Narrow" bug** (`src/inspector.rs`)  
+  Pure AST identifier matching missed Tauri command-layer callers because:  
+  1. `#[tauri::command]` attribute → frontend bridge creates JS-callable names not
+     captured by identifier scanning.  
+  2. `invoke("symbol_name", ...)` in TS/JS files matched symbol by string literal,
+     not identifier reference.  
+  Added a dedicated second-pass Tauri Bridge Detection that produces a new output
+  section **⚡ Tauri Commands (Rust → Frontend Bridge)** listing both Rust handlers
+  and TS `invoke()` call sites.
+
+### Added
+- **`single_file: bool` parameter for `deep_slice`** (`cortex_code_explorer` schema)  
+  When `true`, bypasses all vector search and returns only the exact `target` file/dir.
+  Takes priority over `query`. Eliminates "goes wide" for callers who know exactly
+  which file they want.
+
+- **`only_dir: string` parameter for `deep_slice`** (`cortex_code_explorer` schema)  
+  Restricts semantic vector search candidates to a subdirectory. Pass a path relative
+  to `repoPath`. Complements `exclude` — while `exclude` removes unwanted dirs,
+  `only_dir` *allows only* the specified dir. Essential for polyrepo / microservice
+  codebases where `target` is a shared file but results must stay within one service.
+
+- **`only_dir: string` parameter for `propagation_checklist`** (`cortex_symbol_analyzer` schema)  
+  Overrides `target_dir` when present. Scopes the checklist scan to a single
+  microservice root (e.g., `services/auth`) without changing the `target_dir`
+  semantic. Avoids the 50-file blast-radius cap being hit prematurely on ubiquitous
+  symbols in large monorepos.
+
+## [2.1.0] — 2026-02-21
+
+### Added
+- **`enable_sync` guard for Tier 2 in `cortex_get_rules`** (`src/rules.rs`)  
+  The team-cluster tier (`~/.cortexast/cluster/{id}_rules.yml`) is now skipped when
+  `rules_engine.enable_sync` is `false` in the project's `.cortexast.json`.  
+  Previously the flag was parsed but its value was discarded — the cluster file was
+  always attempted. Now: `if enable_sync { … }` gates the entire Tier 2 block.  
+  Emits `[cortex_get_rules] INFO: Tier 2 (team) skipped — enable_sync=false` to stderr.
+
+- **`no_rules_found` sentinel** (`src/rules.rs`)  
+  When none of the three tier files exist on disk, `get_merged_rules` now returns
+  `{"status":"no_rules_found"}` instead of an empty JSON object `{}`.  
+  Agents can detect the sentinel and treat it as a no-op rather than silently
+  receiving empty rules.
+
+- **`tiers_loaded` counter** (`src/rules.rs`)  
+  Internal `u8` counter incremented for each tier that successfully loads.
+  Drives the `no_rules_found` sentinel and makes future per-tier telemetry easy to add.
+
+- **`read_cortexast_json()`** replaces `read_team_cluster_id()` (`src/rules.rs`)  
+  Now returns `(bool, Option<String>)` — the `enable_sync` flag alongside the cluster ID.
+  Default when `.cortexast.json` is absent or the key is missing: `(true, None)`.
+
+- **Expanded test suite** (`src/rules.rs`) — 6 tests total (was 3):  
+  `get_merged_rules_full_filesystem_merge`, `enable_sync_false_skips_tier2`,
+  `no_rules_found_sentinel_when_all_tiers_missing`.
+
+### Changed
+- **`cortex_get_rules` tool description** (`src/server.rs`)  
+  Updated from the internal implementation summary to the agent-facing spec:  
+  _"CRITICAL: Always call this tool BEFORE taking any action in a new session.
+  Returns dynamically merged AI rules from three tiers … Returns
+  `{"status":"no_rules_found"}` if no rule files exist."_
+
 ## [2.0.3] — 2026-02-21
 
 ### Fixed

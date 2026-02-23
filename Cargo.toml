@@ -38,6 +38,10 @@ dirs = "6.0.0"
 # Rules engine: parse YAML rule files for cortex_get_rules deep-merge.
 serde_yaml = "0.9"
 
+# Blocking HTTP client for cortex_remember → CortexSync POST.
+# ureq is 100% synchronous — safe to call from run_stdio_server's blocking loop.
+ureq = { version = "2.12", features = ["json"] }
+
 # Deep-dive inspection (symbol extraction)
 tree-sitter = "0.26.5"
 tree-sitter-rust = "0.21.0"

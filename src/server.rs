@@ -368,13 +368,17 @@ impl ServerState {
                     },
                     {
                         "name": "cortex_get_rules",
-                        "description": "CRITICAL: Always call this tool BEFORE taking any action in a new session. Returns dynamically merged AI rules from three tiers: Global (~/.cortexast/global_rules.yml), Team (~/.cortexast/cluster/{team_id}_rules.yml via enable_sync in .cortexast.json), and Project (.cortex_rules.yml). Scalars: Project > Team > Global. Arrays: union. Returns {\"status\":\"no_rules_found\"} if no rule files exist.",
+                        "description": "CRITICAL: Always call this tool to fetch the codebase technical rules. Returns dynamically merged AI rules from three tiers, automatically filtering down to the most relevant rules based on your current `file_path`. If `file_path` is not provided, returns all rules.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
                                 "project_path": {
                                     "type": "string",
                                     "description": "Absolute path to the project workspace. Used to locate .cortexast.json and .cortex_rules.yml."
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Optional: Your current working file path (e.g. '/src/ui/Button.tsx'). The system uses this to automatically detect context (frontend, backend, database) and return only the relevant codebase rules. Note: The returned rules remain valid for your entire scope/task."
                                 }
                             },
                             "required": ["project_path"]
@@ -1112,8 +1116,9 @@ Call cortex_chronos with action='list_checkpoints' first to see what exists.".to
                     Some(p) if !p.trim().is_empty() => p.trim().to_string(),
                     _ => return err("cortex_get_rules requires a non-empty 'project_path' parameter.".to_string()),
                 };
+                let file_path_context = args.get("file_path").and_then(|v| v.as_str());
 
-                match get_merged_rules(&project_path) {
+                match get_merged_rules(&project_path, file_path_context) {
                     Ok(merged) => {
                         // Pretty-print as JSON for readability.
                         let json_pretty = serde_json::to_string_pretty(&merged)

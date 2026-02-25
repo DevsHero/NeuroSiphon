@@ -8,8 +8,17 @@ _Giving LLM agents deterministic, AST-level understanding of any codebase — at
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange)](https://www.rust-lang.org/)
-[![MCP Ready](https://img.shields.io/badge/MCP-Ready-blue)](https://modelcontextprotocol.io/)
+[![MCP Compatible](https://img.shields.io/badge/MCP-Compatible_Alpha-orange)](https://modelcontextprotocol.io/)
 [![Version](https://img.shields.io/badge/version-2.0.4-green)](CHANGELOG.md)
+
+> [!WARNING]
+> **🚧 Alpha Version (Under Active Development)**
+> This project is currently in early alpha stage and is undergoing heavy development. Features, APIs, and CLI commands are subject to breaking changes without notice. 
+> 
+> **Current Testing Environment (As of 25 Feb 2026):**
+> Testing is exclusively performed on a developer machine running **macOS Sequoia 15.7.4** with the latest versions of compatible IDEs (Cursor/VS Code/Windsurf). 
+> 
+> *If you are cloning this repository to run on Windows, Linux, or older IDE versions, you may encounter instability or broken features. Cross-platform testing will be expanded in future releases.*
 
 ---
 
@@ -18,7 +27,7 @@ _Giving LLM agents deterministic, AST-level understanding of any codebase — at
 Most AI coding agents rely on tools built for *human eyeballs* — `cat`, `grep`, `tree`, `git diff`. For an LLM these are toxic: they flood the context window with whitespace, comments, full file dumps, and force the agent into "amnesia" from pagination.
 
 **CortexAST is a sensory system built strictly for AI brains.**  
-Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rust, it gives agents a deterministic, high-fidelity understanding of entire codebases — cutting token usage by up to **90%** while preserving 100% of the architectural logic.
+Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rust, it gives agents a deterministic, high-fidelity understanding of entire codebases — cutting token usage by up to **90%** while preserving the core architectural logic.
 
 ### 🛡️ The Reader/Writer Symbiosis
 CortexAST (The Reader) works hand-in-hand with **[CortexSync](https://github.com/cortex-works/cortex-sync)** (The Writer). CortexSync embeds your real-time agent telemetry into a journal that CortexAST then retrieves via `cortex_memory_retriever`, providing **Persistent Cross-Session Memory.**
@@ -84,7 +93,7 @@ Manage enterprise-grade AI coding rules across three distinct levels:
 - `skeleton_only: true` — return signatures/structure only (drastically reduces tokens when you only need the API)
 - `max_chars` — optional output cap (default **8 000**)
 
-**`action: find_usages`** — 100% accurate AST usages, zero false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldAccesses** / **FieldInits**.
+**`action: find_usages`** — Highly accurate AST usages, parsing out false positives from comments or strings. Categorises: **Calls** / **TypeRefs** / **FieldAccesses** / **FieldInits**.
 - `symbol_name` + `target_dir` (**required**)
 
 **`action: find_implementations`** — Finds structs/classes that implement a given trait/interface (Rust `impl Trait for Type`, TS `class X implements Y`).

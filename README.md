@@ -3,8 +3,8 @@
 **The AI-Native Code Intelligence Backend. Extract the Signal, Discard the Noise.**  
 _Giving LLM agents deterministic, AST-level understanding of any codebase — at nuclear token efficiency._
 
-[![CortexAST](https://img.shields.io/badge/Repo-CortexAST-blue?style=for-the-badge&logo=github)](https://github.com/DevsHero/CortexAST)
-[![CortexSync](https://img.shields.io/badge/Repo-CortexSync-orange?style=for-the-badge&logo=github)](https://github.com/DevsHero/CortexSync)
+[![CortexAST](https://img.shields.io/badge/Repo-CortexAST-blue?style=for-the-badge&logo=github)](https://github.com/cortex-works/cortex-ast)
+[![CortexSync](https://img.shields.io/badge/Repo-CortexSync-orange?style=for-the-badge&logo=github)](https://github.com/cortex-works/cortex-sync)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Built%20with-Rust-orange)](https://www.rust-lang.org/)
@@ -21,7 +21,7 @@ Most AI coding agents rely on tools built for *human eyeballs* — `cat`, `grep`
 Powered by [Tree-sitter](https://tree-sitter.github.io/) and written in pure Rust, it gives agents a deterministic, high-fidelity understanding of entire codebases — cutting token usage by up to **90%** while preserving 100% of the architectural logic.
 
 ### 🛡️ The Reader/Writer Symbiosis
-CortexAST (The Reader) works hand-in-hand with **[CortexSync](https://github.com/DevsHero/CortexSync)** (The Writer). CortexSync embeds your real-time agent telemetry into a journal that CortexAST then retrieves via `cortex_memory_retriever`, providing **Persistent Cross-Session Memory.**
+CortexAST (The Reader) works hand-in-hand with **[CortexSync](https://github.com/cortex-works/cortex-sync)** (The Writer). CortexSync embeds your real-time agent telemetry into a journal that CortexAST then retrieves via `cortex_memory_retriever`, providing **Persistent Cross-Session Memory.**
 
 ---
 
@@ -171,7 +171,7 @@ Read: [USE_CASES.md](USE_CASES.md)
 
 ### Option A — Pre-built Binary
 
-Download from [Releases](https://github.com/DevsHero/CortexAST/releases/latest):
+Download from [Releases](https://github.com/cortex-works/cortex-ast/releases/latest):
 
 | Platform | File |
 |---|---|
@@ -189,7 +189,7 @@ chmod +x cortexast-macos-aarch64
 ### Option B — Build from Source
 
 ```bash
-git clone https://github.com/DevsHero/CortexAST.git
+git clone https://github.com/cortex-works/cortex-ast.git
 cd CortexAST
 cargo build --release
 # Binary: ./target/release/cortexast
@@ -327,4 +327,4 @@ PRs welcome.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-Crafted with 🦀 by [DevsHero](https://github.com/DevsHero).
+Crafted with 🦀 by [cortex-works](https://github.com/cortex-works).

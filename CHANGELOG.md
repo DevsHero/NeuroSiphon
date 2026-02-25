@@ -7,7 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-- _No unreleased changes yet._
+### Added
+- **Network Map & Omni-AST Integration**  
+  Added the `cortex_list_network` MCP tool to return registered codebase entries from `~/.cortexast/codebases.json`.
+- **Cross-Codebase Resolution (`target_project`)**  
+  Expanded `cortex_code_explorer` and `cortex_symbol_analyzer` megatools to accept a `target_project` argument using strict ID/path whitelists from the network map dashboard.
+
+### Changed
+- Relocated core project references and URLs to `@cortex-works` to match the organizational migration of the CortexSync ecosystem.
 
 ## [2.0.4] — 2025-07-22
 

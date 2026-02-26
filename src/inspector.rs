@@ -41,6 +41,15 @@ pub trait LanguageDriver: Send + Sync {
     fn handles_path(&self, path: &Path) -> bool;
     fn language_for_path(&self, path: &Path) -> Language;
 
+    /// Build a fresh Parser, properly attaching Wasm stores if necessary.
+    fn make_parser(&self, path: &Path) -> Result<Parser> {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&self.language_for_path(path))
+            .context("Failed to set tree-sitter language")?;
+        Ok(parser)
+    }
+
     fn find_imports(
         &self,
         _path: &Path,
@@ -468,7 +477,8 @@ pub fn render_skeleton(path: &Path) -> Result<String> {
             .join(path)
     };
 
-    let driver = language_config()
+    let cfg = language_config().read().unwrap();
+    let driver = cfg
         .driver_for_path(&abs)
         .ok_or_else(|| anyhow!("Unsupported file extension: {}", abs.display()))?;
     let language = driver.language_for_path(&abs);
@@ -487,10 +497,7 @@ pub fn render_skeleton(path: &Path) -> Result<String> {
 
     let source = source_text.as_bytes();
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .context("Failed to set tree-sitter language")?;
+    let mut parser = driver.make_parser(&abs)?;
     let tree = parser
         .parse(source_text.as_str(), None)
         .ok_or_else(|| anyhow!("Failed to parse file"))?;
@@ -516,17 +523,15 @@ pub fn render_skeleton_from_source(path: &Path, source_text: &str) -> Result<Str
         return Ok("/* MINIFIED_OR_GENERATED — skipped */\n".to_string());
     }
 
-    let driver = language_config()
+    let cfg = language_config().read().unwrap();
+    let driver = cfg
         .driver_for_path(&abs)
         .ok_or_else(|| anyhow!("Unsupported file extension: {}", abs.display()))?;
     let language = driver.language_for_path(&abs);
 
     let source = source_text.as_bytes();
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .context("Failed to set tree-sitter language")?;
+    let mut parser = driver.make_parser(&abs)?;
     let tree = parser
         .parse(source_text, None)
         .ok_or_else(|| anyhow!("Failed to parse file"))?;
@@ -567,7 +572,8 @@ pub fn try_render_skeleton_from_source(path: &Path, source_text: &str) -> Result
             .join(path)
     };
 
-    let Some(driver) = language_config().driver_for_path(&abs) else {
+    let cfg = language_config().read().unwrap();
+    let Some(driver) = cfg.driver_for_path(&abs) else {
         // Universal fallback for unsupported *code-like* file types.
         // For docs/config/text formats, keep the existing truncation logic at higher layers.
         let ext = path_ext_lower(&abs);
@@ -595,10 +601,7 @@ pub fn try_render_skeleton_from_source(path: &Path, source_text: &str) -> Result
 
     let source = source_text.as_bytes();
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .context("Failed to set tree-sitter language")?;
+    let mut parser = driver.make_parser(&abs)?;
 
     let Some(tree) = parser.parse(source_text, None) else {
         // Parse failures degrade to full content at higher layers (or truncation).
@@ -638,29 +641,11 @@ impl LanguageConfig {
 
 impl Default for LanguageConfig {
     fn default() -> Self {
-        let mut drivers: Vec<Box<dyn LanguageDriver>> = vec![
+        let drivers: Vec<Box<dyn LanguageDriver>> = vec![
             Box::new(RustDriver),
             Box::new(TypeScriptDriver),
             Box::new(PythonDriver),
         ];
-
-        #[cfg(feature = "lang-go")]
-        drivers.push(Box::new(GoDriver));
-
-        #[cfg(feature = "lang-dart")]
-        drivers.push(Box::new(DartDriver));
-
-        #[cfg(feature = "lang-java")]
-        drivers.push(Box::new(JavaDriver));
-
-        #[cfg(feature = "lang-csharp")]
-        drivers.push(Box::new(CSharpDriver));
-
-        #[cfg(feature = "lang-php")]
-        drivers.push(Box::new(PhpDriver));
-
-        #[cfg(feature = "lang-proto")]
-        drivers.push(Box::new(ProtoDriver));
 
         let mut cfg = Self {
             drivers,
@@ -677,9 +662,70 @@ impl Default for LanguageConfig {
     }
 }
 
-fn language_config() -> &'static LanguageConfig {
-    static CFG: OnceLock<LanguageConfig> = OnceLock::new();
-    CFG.get_or_init(LanguageConfig::default)
+impl LanguageConfig {
+    pub fn load_cached_wasm_drivers(&mut self) {
+        use crate::grammar_manager;
+        if let Ok(dir) = grammar_manager::grammar_cache_dir() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("wasm") {
+                        if let Some(lang) = path.file_stem().and_then(|s| s.to_str()) {
+                            let lang_str: &'static str = Box::leak(lang.to_string().into_boxed_str());
+                            let exts = vec![lang_str];
+                            if let Some(driver) = WasmDriver::try_new(lang_str, exts) {
+                                let idx = self.drivers.len();
+                                self.drivers.push(Box::new(driver));
+                                for ext in self.drivers[idx].extensions() {
+                                    self.by_ext.insert(ext.to_string(), idx);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn add_wasm_driver(&mut self, lang: &str) -> anyhow::Result<()> {
+        let lang_str: &'static str = Box::leak(lang.to_string().into_boxed_str());
+        let exts = vec![lang_str]; 
+        if let Some(driver) = WasmDriver::try_new(lang_str, exts) {
+            let idx = self.drivers.len();
+            self.drivers.push(Box::new(driver));
+            for ext in self.drivers[idx].extensions() {
+                self.by_ext.insert(ext.to_string(), idx);
+            }
+            Ok(())
+        } else {
+            anyhow::bail!("Failed to load Wasm grammar for {}", lang)
+        }
+    }
+    
+    pub fn active_languages(&self) -> Vec<String> {
+        self.drivers.iter().map(|d| d.name().to_string()).collect()
+    }
+
+    pub fn extensions_for_language(&self, lang: &str) -> Vec<String> {
+        if let Some(d) = self.drivers.iter().find(|d| d.name() == lang) {
+            d.extensions().iter().map(|s| s.to_string()).collect()
+        } else {
+            vec![]
+        }
+    }
+}
+
+pub fn exported_language_config() -> &'static std::sync::RwLock<LanguageConfig> {
+    language_config()
+}
+
+fn language_config() -> &'static std::sync::RwLock<LanguageConfig> {
+    static CFG: OnceLock<std::sync::RwLock<LanguageConfig>> = OnceLock::new();
+    CFG.get_or_init(|| {
+        let mut cfg = LanguageConfig::default();
+        cfg.load_cached_wasm_drivers();
+        std::sync::RwLock::new(cfg)
+    })
 }
 
 fn path_ext_lower(path: &Path) -> String {
@@ -1144,94 +1190,149 @@ impl LanguageDriver for PythonDriver {
     }
 }
 
-fn is_go_exported_ident(name: &str) -> bool {
-    name.chars()
-        .next()
-        .map(|c| c.is_ascii_uppercase())
-        .unwrap_or(false)
+// ─────────────────────────────────────────────────────────────────────────────
+// WasmDriver — runtime-loaded grammar from ~/.cortex-works/grammars/
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A dynamic `LanguageDriver` that loads a tree-sitter grammar from a `.wasm`
+/// file in the local cache (`~/.cortex-works/grammars/{lang}.wasm`).
+///
+/// If the grammar hasn't been downloaded yet, [`crate::grammar_manager::ensure_grammar_available`]
+/// is called at construction time.  If downloading fails the driver is never
+/// registered; callers fall back to the universal regex parser.
+///
+/// Body-pruning queries are loaded from `{lang}_prune.scm` in the same cache
+/// directory.  If no `.scm` exists the driver still works — it just skips
+/// pruning (returns an empty list from `body_prune_ranges`).
+/// A dynamic `LanguageDriver` that loads a tree-sitter grammar from a `.wasm`
+/// file in the local cache (`~/.cortex-works/grammars/{lang}.wasm`).
+///
+/// If the grammar hasn't been downloaded yet, [`crate::grammar_manager::ensure_grammar_available`]
+/// is called at construction time.  If downloading fails the driver is never
+/// registered; callers fall back to the universal regex parser.
+///
+/// Body-pruning queries are loaded from `{lang}_prune.scm` in the same cache
+/// directory.  If no `.scm` exists the driver still works — it just skips
+/// pruning (returns an empty list from `body_prune_ranges`).
+///
+/// **Thread safety:** `WasmDriver` is `Send + Sync` because `WasmStore` is,
+/// and we hold the `Engine` by `Arc` so clones are cheap.
+pub struct WasmDriver {
+    /// Language name (e.g. "go", "dart", "java").
+    lang:      String,
+    /// File extensions handled by this driver (lowercase, no dot).
+    exts:      Vec<String>,
+    /// Compiled tree-sitter `Language` loaded from the `.wasm`.
+    language:  Language,
+    /// The WasmStore that owns the compiled grammar; must be attached to every
+    /// `Parser` before calling `parser.set_language()`.
+    store:     std::sync::Arc<std::sync::Mutex<tree_sitter::WasmStore>>,
+    /// Optional body-prune query text loaded from the `.scm` file.
+    prune_scm: Option<String>,
 }
 
-#[cfg(feature = "lang-go")]
-struct GoDriver;
+impl WasmDriver {
+    /// Try to construct a `WasmDriver` for the given language.
+    ///
+    /// Returns `None` when:
+    /// - The grammar `.wasm` cannot be downloaded / found.
+    /// - The `.wasm` fails to be instantiated by the `WasmStore`.
+    pub fn try_new(lang: &str, exts: Vec<&str>) -> Option<Self> {
+        use crate::grammar_manager;
+        use tree_sitter::{WasmStore, wasmtime::Engine};
 
-#[cfg(feature = "lang-go")]
-impl LanguageDriver for GoDriver {
+        // Step 1: ensure the .wasm exists locally (download if missing).
+        if let Err(e) = grammar_manager::ensure_grammar_available(lang) {
+            eprintln!("[wasm_driver] {lang}: could not ensure grammar: {e:#}");
+            return None;
+        }
+
+        // Step 2: load the .wasm bytes from disk.
+        let wasm_bytes = match std::fs::read(grammar_manager::wasm_path(lang).ok()?) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("[wasm_driver] {lang}: failed to read .wasm: {e}");
+                return None;
+            }
+        };
+
+        // Step 3: create a wasmtime Engine (exposed via tree_sitter::wasmtime).
+        let engine = Engine::default();
+
+        // Step 4: create WasmStore and load the grammar.
+        let mut store = match WasmStore::new(&engine) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[wasm_driver] {lang}: WasmStore::new failed: {e}");
+                return None;
+            }
+        };
+        let language = match store.load_language(lang, &wasm_bytes) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[wasm_driver] {lang}: load_language failed: {e}");
+                return None;
+            }
+        };
+
+        // Step 5: stash the store behind a Mutex so multiple parse calls can
+        // safely cycle the WasmStore into the Parser and recover it afterward.
+        let store_arc = std::sync::Arc::new(std::sync::Mutex::new(store));
+
+        // Step 6: optionally load the prune query.
+        let prune_scm = grammar_manager::load_prune_scm(lang);
+
+        eprintln!("[wasm_driver] {lang}: loaded .wasm grammar successfully");
+        Some(Self {
+            lang:      lang.to_string(),
+            exts:      exts.iter().map(|e| e.to_string()).collect(),
+            language,
+            store:     store_arc,
+            prune_scm,
+        })
+    }
+}
+impl LanguageDriver for WasmDriver {
+    fn make_parser(&self, _path: &Path) -> Result<Parser> {
+        let mut parser = Parser::new();
+        // DUPLICATE Engine to get a fresh WasmStore for each parser invocation.
+        use tree_sitter::{WasmStore, wasmtime::Engine};
+        let engine = Engine::default();
+        let fresh_store = WasmStore::new(&engine).map_err(|e| anyhow::anyhow!("WasmStore fails: {:?}", e))?;
+        parser.set_wasm_store(fresh_store).map_err(|e| anyhow::anyhow!("set_wasm_store fails: {:?}", e))?;
+        parser.set_language(&self.language).context("Failed to set language")?;
+        Ok(parser)
+    }
+
     fn name(&self) -> &'static str {
-        "go"
+        // Safety: we leak a small String once per language — acceptable for a
+        // CLI binary where the number of Wasm drivers is bounded by `active_languages`.
+        Box::leak(self.lang.clone().into_boxed_str())
     }
 
     fn extensions(&self) -> &'static [&'static str] {
-        &["go"]
+        // Same reasoning as `name()`.
+        let leaked: Vec<&'static str> = self
+            .exts
+            .iter()
+            .map(|e| Box::leak(e.clone().into_boxed_str()) as &'static str)
+            .collect();
+        Box::leak(leaked.into_boxed_slice())
     }
 
     fn handles_path(&self, path: &Path) -> bool {
-        path_ext_lower(path) == "go"
+        let ext = path_ext_lower(path);
+        self.exts.iter().any(|e| e == &ext)
     }
 
     fn language_for_path(&self, _path: &Path) -> Language {
-        tree_sitter_go::language()
+        self.language.clone()
     }
 
-    fn find_imports(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<String>> {
-        let mut out: Vec<String> = Vec::new();
-        out.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(import_spec (interpreted_string_literal) @src)"#,
-            "src",
-        )?);
-        out.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(import_spec (raw_string_literal) @src)"#,
-            "src",
-        )?);
-        Ok(out.into_iter().map(|s| strip_string_quotes(&s)).collect())
-    }
-
-    fn find_exports(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<String>> {
-        let mut exports: Vec<String> = Vec::new();
-
-        exports.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(function_declaration name: (identifier) @name)"#,
-            "name",
-        )?);
-        exports.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(method_declaration name: (field_identifier) @name)"#,
-            "name",
-        )?);
-        exports.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(type_spec name: (type_identifier) @name)"#,
-            "name",
-        )?);
-
-        exports.retain(|n| is_go_exported_ident(n));
-        Ok(exports)
-    }
-
+    /// Extract symbols using a generic pattern: look for any named node whose
+    /// field `name` is an identifier.  This is a best-effort heuristic that
+    /// covers the majority of OOP and functional languages without needing a
+    /// hand-crafted query per language.
     fn extract_skeleton(
         &self,
         _path: &Path,
@@ -1239,44 +1340,22 @@ impl LanguageDriver for GoDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<Symbol>> {
-        let mut symbols: Vec<Symbol> = Vec::new();
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(function_declaration name: (identifier) @name) @def"#,
-            "function",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_declaration name: (field_identifier) @name) @def"#,
-            "method",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(type_spec name: (type_identifier) @name) @def"#,
-            "type",
-            false,
-        )?);
-        // Package-level const declarations (e.g. `const MaxRetries = 5`).
-        symbols.extend(
-            run_query(
-                source,
-                root,
-                &language,
-                r#"(const_spec name: (identifier) @name) @def"#,
-                "const",
-                false,
-            )
-            .unwrap_or_default(),
-        );
-        Ok(symbols)
+        // Generic fallback: extract top-level identifier captures.
+        let generic_query = r#"
+            [
+              (function_declaration name: (_) @name) @def
+              (method_declaration   name: (_) @name) @def
+              (class_declaration    name: (_) @name) @def
+              (struct_type          name: (_) @name) @def
+              (interface_type       name: (_) @name) @def
+            ]
+        "#;
+
+        run_query(source, root, &language, generic_query, "function", true)
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .pipe(Ok)
     }
 
     fn body_prune_ranges(
@@ -1287,13 +1366,11 @@ impl LanguageDriver for GoDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(
-            source,
-            root,
-            &language,
-            include_str!("../queries/go_prune.scm"),
-            "body",
-        )?;
+        let Some(scm) = &self.prune_scm else {
+            return Ok(vec![]); // No .scm — graceful skip.
+        };
+        let bodies = run_query_byte_ranges(source, root, &language, scm, "body")
+            .unwrap_or_default();
         Ok(bodies
             .into_iter()
             .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
@@ -1301,600 +1378,13 @@ impl LanguageDriver for GoDriver {
     }
 }
 
-#[cfg(feature = "lang-dart")]
-struct DartDriver;
-
-#[cfg(feature = "lang-dart")]
-impl LanguageDriver for DartDriver {
-    fn name(&self) -> &'static str {
-        "dart"
-    }
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["dart"]
-    }
-
-    fn handles_path(&self, path: &Path) -> bool {
-        path_ext_lower(path) == "dart"
-    }
-
-    fn language_for_path(&self, _path: &Path) -> Language {
-        tree_sitter_dart::language()
-    }
-
-    fn extract_skeleton(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<Symbol>> {
-        let mut symbols: Vec<Symbol> = Vec::new();
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(class_definition name: (identifier) @name) @def"#,
-            "class",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(enum_declaration name: (identifier) @name) @def"#,
-            "enum",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(mixin_declaration (identifier) @name) @def"#,
-            "mixin",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(extension_declaration name: (identifier) @name) @def"#,
-            "extension",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(type_alias (type_identifier) @name) @def"#,
-            "type",
-            false,
-        )?);
-
-        // Top-level function signatures.
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(function_signature name: (identifier) @name) @def"#,
-            "function",
-            true,
-        )?);
-
-        // Method signatures inside classes/mixins/extensions.
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_signature (function_signature name: (identifier) @name)) @def"#,
-            "method",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_signature (getter_signature name: (identifier) @name)) @def"#,
-            "method",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_signature (setter_signature name: (identifier) @name)) @def"#,
-            "method",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_signature (constructor_signature name: (identifier) @name)) @def"#,
-            "method",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_signature (factory_constructor_signature (identifier) @name)) @def"#,
-            "method",
-            true,
-        )?);
-
-        Ok(symbols)
-    }
-
-    fn body_prune_ranges(
-        &self,
-        _path: &Path,
-        _source_text: &str,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<(usize, usize, String)>> {
-        // Dart function/method bodies are represented as `function_body` nodes.
-        // We only prune block-bodied functions (skip `=> expr;` forms for now).
-        let bodies = run_query_byte_ranges(
-            source,
-            root,
-            &language,
-            include_str!("../queries/dart_prune.scm"),
-            "body",
-        )?;
-        Ok(bodies
-            .into_iter()
-            .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
-            .collect())
-    }
+/// Small pipe-style helper to keep the `extract_skeleton` return clean.
+trait Pipe: Sized {
+    fn pipe<F, R>(self, f: F) -> R where F: FnOnce(Self) -> R { f(self) }
 }
+impl<T> Pipe for Vec<T> {}
 
-#[cfg(feature = "lang-java")]
-struct JavaDriver;
 
-#[cfg(feature = "lang-java")]
-impl LanguageDriver for JavaDriver {
-    fn name(&self) -> &'static str {
-        "java"
-    }
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["java"]
-    }
-
-    fn handles_path(&self, path: &Path) -> bool {
-        path_ext_lower(path) == "java"
-    }
-
-    fn language_for_path(&self, _path: &Path) -> Language {
-        tree_sitter_java::language()
-    }
-
-    fn find_imports(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<String>> {
-        // import java.util.Vector;
-        // import static foo.Bar.*;
-        let mut out: Vec<String> = Vec::new();
-        out.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(import_declaration (scoped_identifier) @path)"#,
-            "path",
-        )?);
-        Ok(out)
-    }
-
-    fn extract_skeleton(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<Symbol>> {
-        let mut symbols: Vec<Symbol> = Vec::new();
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(class_declaration (identifier) @name) @def"#,
-            "class",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(interface_declaration (identifier) @name) @def"#,
-            "interface",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(enum_declaration name: (identifier) @name) @def"#,
-            "enum",
-            false,
-        )?);
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_declaration (identifier) @name) @def"#,
-            "method",
-            true,
-        )?);
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(constructor_declaration (identifier) @name) @def"#,
-            "constructor",
-            true,
-        )?);
-
-        Ok(symbols)
-    }
-
-    fn body_prune_ranges(
-        &self,
-        _path: &Path,
-        _source_text: &str,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(
-            source,
-            root,
-            &language,
-            include_str!("../queries/java_prune.scm"),
-            "body",
-        )?;
-        Ok(bodies
-            .into_iter()
-            .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
-            .collect())
-    }
-}
-
-#[cfg(feature = "lang-csharp")]
-struct CSharpDriver;
-
-#[cfg(feature = "lang-csharp")]
-impl LanguageDriver for CSharpDriver {
-    fn name(&self) -> &'static str {
-        "csharp"
-    }
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["cs"]
-    }
-
-    fn handles_path(&self, path: &Path) -> bool {
-        path_ext_lower(path) == "cs"
-    }
-
-    fn language_for_path(&self, _path: &Path) -> Language {
-        tree_sitter_c_sharp::language()
-    }
-
-    fn find_imports(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<String>> {
-        let mut out: Vec<String> = Vec::new();
-        out.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(using_directive (identifier) @path)"#,
-            "path",
-        )?);
-        out.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(using_directive (qualified_name) @path)"#,
-            "path",
-        )?);
-        out.extend(run_query_strings(
-            source,
-            root,
-            &language,
-            r#"(using_directive (alias_qualified_name) @path)"#,
-            "path",
-        )?);
-        Ok(out)
-    }
-
-    fn extract_skeleton(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<Symbol>> {
-        let mut symbols: Vec<Symbol> = Vec::new();
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(class_declaration name: (identifier) @name) @def"#,
-            "class",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(struct_declaration name: (identifier) @name) @def"#,
-            "struct",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(interface_declaration name: (identifier) @name) @def"#,
-            "interface",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(enum_declaration name: (identifier) @name) @def"#,
-            "enum",
-            false,
-        )?);
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_declaration name: (identifier) @name) @def"#,
-            "method",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(constructor_declaration name: (identifier) @name) @def"#,
-            "constructor",
-            true,
-        )?);
-
-        Ok(symbols)
-    }
-
-    fn body_prune_ranges(
-        &self,
-        _path: &Path,
-        _source_text: &str,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(
-            source,
-            root,
-            &language,
-            include_str!("../queries/csharp_prune.scm"),
-            "body",
-        )?;
-        Ok(bodies
-            .into_iter()
-            .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
-            .collect())
-    }
-}
-
-#[cfg(feature = "lang-php")]
-struct PhpDriver;
-
-#[cfg(feature = "lang-php")]
-impl LanguageDriver for PhpDriver {
-    fn name(&self) -> &'static str {
-        "php"
-    }
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["php"]
-    }
-
-    fn handles_path(&self, path: &Path) -> bool {
-        path_ext_lower(path) == "php"
-    }
-
-    fn language_for_path(&self, _path: &Path) -> Language {
-        tree_sitter_php::LANGUAGE_PHP.into()
-    }
-
-    fn extract_skeleton(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<Symbol>> {
-        let mut symbols: Vec<Symbol> = Vec::new();
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(class_declaration name: (name) @name) @def"#,
-            "class",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(interface_declaration name: (name) @name) @def"#,
-            "interface",
-            false,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(trait_declaration name: (name) @name) @def"#,
-            "trait",
-            false,
-        )?);
-
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(function_definition name: (name) @name) @def"#,
-            "function",
-            true,
-        )?);
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(method_declaration name: (name) @name) @def"#,
-            "method",
-            true,
-        )?);
-
-        Ok(symbols)
-    }
-
-    fn body_prune_ranges(
-        &self,
-        _path: &Path,
-        _source_text: &str,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<(usize, usize, String)>> {
-        let bodies = run_query_byte_ranges(
-            source,
-            root,
-            &language,
-            include_str!("../queries/php_prune.scm"),
-            "body",
-        )?;
-        Ok(bodies
-            .into_iter()
-            .map(|(s, e)| (s, e, "{ /* ... */ }".to_string()))
-            .collect())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Proto3 / Proto2 driver (tree-sitter-proto)
-// ---------------------------------------------------------------------------
-// Exposes services, messages, enums, and rpc methods for map_repo, read_symbol,
-// find_usages, and call_hierarchy. No skeleton pruning needed — .proto files
-// are already human-readable contracts without implementation bodies.
-
-#[cfg(feature = "lang-proto")]
-struct ProtoDriver;
-
-#[cfg(feature = "lang-proto")]
-impl LanguageDriver for ProtoDriver {
-    fn name(&self) -> &'static str {
-        "proto"
-    }
-
-    fn extensions(&self) -> &'static [&'static str] {
-        &["proto"]
-    }
-
-    fn handles_path(&self, path: &Path) -> bool {
-        path_ext_lower(path) == "proto"
-    }
-
-    fn language_for_path(&self, _path: &Path) -> Language {
-        tree_sitter_proto::LANGUAGE.into()
-    }
-
-    fn extract_skeleton(
-        &self,
-        _path: &Path,
-        source: &[u8],
-        root: Node,
-        language: Language,
-    ) -> Result<Vec<Symbol>> {
-        let mut symbols: Vec<Symbol> = Vec::new();
-
-        // Top-level services
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(service (service_name (identifier) @name)) @def"#,
-            "service",
-            false,
-        )?);
-
-        // Top-level messages
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(message (message_name (identifier) @name)) @def"#,
-            "message",
-            false,
-        )?);
-
-        // Top-level enums
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(enum (enum_name (identifier) @name)) @def"#,
-            "enum",
-            false,
-        )?);
-
-        // RPC methods inside services (pruned = true so they collapse in skeleton view)
-        symbols.extend(run_query(
-            source,
-            root,
-            &language,
-            r#"(rpc (rpc_name (identifier) @name)) @def"#,
-            "rpc",
-            true,
-        )?);
-
-        Ok(symbols)
-    }
-
-    // Proto files have no function bodies to prune — return empty.
-    fn body_prune_ranges(
-        &self,
-        _path: &Path,
-        _source_text: &str,
-        _source: &[u8],
-        _root: Node,
-        _language: Language,
-    ) -> Result<Vec<(usize, usize, String)>> {
-        Ok(vec![])
-    }
-}
 
 fn run_query_byte_ranges(
     source: &[u8],
@@ -2076,7 +1566,8 @@ pub fn analyze_file(path: &Path) -> Result<FileSymbols> {
             .join(path)
     };
 
-    let driver = language_config()
+    let cfg = language_config().read().unwrap();
+    let driver = cfg
         .driver_for_path(&abs)
         .ok_or_else(|| anyhow!("Unsupported file extension: {}", abs.display()))?;
     let language = driver.language_for_path(&abs);
@@ -2085,10 +1576,7 @@ pub fn analyze_file(path: &Path) -> Result<FileSymbols> {
         .with_context(|| format!("Failed to read {}", abs.display()))?;
     let source = source_text.as_bytes();
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .context("Failed to set tree-sitter language")?;
+    let mut parser = driver.make_parser(&abs)?;
 
     let tree = parser
         .parse(source_text.as_str(), None)
@@ -2135,17 +1623,17 @@ pub fn extract_symbols_from_source(path: &Path, source_text: &str) -> Vec<Symbol
         }
     };
 
-    let Some(driver) = language_config().driver_for_path(&abs) else {
+    let cfg = language_config().read().unwrap();
+    let Some(driver) = cfg.driver_for_path(&abs) else {
         return vec![];
     };
 
     let language = driver.language_for_path(&abs);
     let source = source_text.as_bytes();
 
-    let mut parser = Parser::new();
-    if parser.set_language(&language).is_err() {
+    let Ok(mut parser) = driver.make_parser(&abs) else {
         return vec![];
-    }
+    };
 
     let Some(tree) = parser.parse(source_text, None) else {
         return vec![];
@@ -2203,7 +1691,8 @@ pub fn read_symbol_with_options(
     }
     let source_text = String::from_utf8_lossy(&raw).into_owned();
 
-    let Some(driver) = language_config().driver_for_path(&abs) else {
+    let cfg = language_config().read().unwrap();
+    let Some(driver) = cfg.driver_for_path(&abs) else {
         return Err(anyhow!(
             "Unsupported file type: {}",
             abs.extension().and_then(|e| e.to_str()).unwrap_or("?")
@@ -2212,10 +1701,7 @@ pub fn read_symbol_with_options(
     let language = driver.language_for_path(&abs);
     let source = source_text.as_bytes();
 
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .context("Failed to set tree-sitter language")?;
+    let mut parser = driver.make_parser(&abs)?;
     let tree = parser
         .parse(&source_text, None)
         .ok_or_else(|| anyhow!("Tree-sitter parse failed for {}", abs.display()))?;
@@ -2497,7 +1983,8 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         .hidden(true) // skip dot-dirs like .git, node_modules handled by standard_filters
         .build();
 
-    let cfg = language_config();
+    let cfg_lock = language_config().read().unwrap();
+    let cfg = &*cfg_lock;
     let mut all_results: Vec<UsageMatch> = Vec::new();
 
     for entry_result in walker {
@@ -2533,10 +2020,7 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let mut parser = Parser::new();
-        if parser.set_language(&language).is_err() {
-            continue;
-        }
+        let Ok(mut parser) = driver.make_parser(path) else { continue };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -2645,7 +2129,8 @@ pub fn propagation_checklist(
         .hidden(true)
         .build();
 
-    let cfg = language_config();
+    let cfg_lock = language_config().read().unwrap();
+    let cfg = &*cfg_lock;
 
     // Hybrid Omni-Match Strategy:
     // - Always match the base symbol name
@@ -2696,10 +2181,7 @@ pub fn propagation_checklist(
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let mut parser = Parser::new();
-        if parser.set_language(&language).is_err() {
-            continue;
-        }
+        let Ok(mut parser) = driver.make_parser(path) else { continue };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -3138,7 +2620,8 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
         .hidden(true)
         .build();
 
-    let cfg = language_config();
+    let cfg_lock = language_config().read().unwrap();
+    let cfg = &*cfg_lock;
     let mut all_results: Vec<ImplementationMatch> = Vec::new();
 
     for entry_result in walker {
@@ -3183,10 +2666,7 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let mut parser = Parser::new();
-        if parser.set_language(&language).is_err() {
-            continue;
-        }
+        let Ok(mut parser) = driver.make_parser(path) else { continue };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -3620,7 +3100,8 @@ pub fn repo_map_with_filter(
         })
         .build();
 
-    let cfg = language_config();
+    let cfg_lock = language_config().read().unwrap();
+    let cfg = &*cfg_lock;
     let search_tokens: Vec<String> = search_filter
         .unwrap_or("")
         .split('|')
@@ -4282,7 +3763,8 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
             .join(target_dir)
     };
 
-    let cfg = language_config();
+    let cfg_lock = language_config().read().unwrap();
+    let cfg = &*cfg_lock;
 
     struct DefSite {
         file: String,
@@ -4326,10 +3808,7 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let mut parser = Parser::new();
-        if parser.set_language(&language).is_err() {
-            continue;
-        }
+        let Ok(mut parser) = driver.make_parser(path) else { continue };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -4359,8 +3838,7 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
             let body_text: String = text_lines[body_start..body_end].join("\n");
             let body_bytes = body_text.as_bytes();
 
-            let mut body_parser = Parser::new();
-            if body_parser.set_language(&language).is_ok() {
+            if let Ok(mut body_parser) = driver.make_parser(path) {
                 if let Some(body_tree) = body_parser.parse(&body_text, None) {
                     let body_root = body_tree.root_node();
                     let mut raw_calls: Vec<(String, u32)> = Vec::new();

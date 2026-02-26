@@ -514,6 +514,26 @@ impl ServerState {
                             "type": "object",
                             "properties": {}
                         }
+                    },
+                    {
+                        "name": "cortex_manage_ast_languages",
+                        "description": "Self-Evolving AST Manager: ตรวจสอบภาษาที่ระบบรองรับ และดาวน์โหลด/โหลด parser ของภาษาใหม่ (Wasm) เพื่อสอนให้ระบบสามารถอ่านโค้ดของภาษาที่ยังไม่รู้จักได้แบบ Real-time",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "description": "คำสั่งที่ต้องการทำ: 'status' (เพื่อเช็คภาษาใช้งานได้และภาษาที่รองรับให้โหลด) หรือ 'add' (เพื่อดาวน์โหลดและติดตั้ง)",
+                                    "enum": ["status", "add"]
+                                },
+                                "languages": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "รายชื่อภาษาที่ต้องการติดตั้ง (เช่น ['go', 'php']). จำเป็นต้องระบุเมื่อ action='add'"
+                                }
+                            },
+                            "required": ["action"]
+                        }
                     }
                 ]
             }
@@ -549,6 +569,75 @@ impl ServerState {
 
         match name {
             // ── Megatools ────────────────────────────────────────────────
+            "cortex_manage_ast_languages" => {
+                let action = args
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                match action {
+                    "status" => {
+                        let active = crate::inspector::exported_language_config().read().unwrap().active_languages();
+                        let available_to_download = vec!["go", "php", "ruby", "java", "c", "cpp", "c_sharp", "dart"];
+                        ok(serde_json::to_string(&json!({
+                            "active": active,
+                            "available_to_download": available_to_download
+                        })).unwrap_or_default())
+                    }
+                    "add" => {
+                        let mut loaded_langs = Vec::new();
+                        let mut failed_langs = Vec::new();
+                        
+                        let mut exts_to_invalidate = Vec::new();
+                        
+                        if let Some(arr) = args.get("languages").and_then(|v| v.as_array()) {
+                            let mut cfg = crate::inspector::exported_language_config().write().unwrap();
+                            for item in arr {
+                                if let Some(lang) = item.as_str() {
+                                    if cfg.active_languages().contains(&lang.to_string()) {
+                                        loaded_langs.push(lang.to_string());
+                                        continue;
+                                    }
+                                    match cfg.add_wasm_driver(lang) {
+                                        Ok(_) => {
+                                            loaded_langs.push(lang.to_string());
+                                            exts_to_invalidate.extend(cfg.extensions_for_language(lang));
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Failed to add wasm driver for {}: {}", lang, e);
+                                            failed_langs.push(lang.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            return err("No languages provided for 'add' action".to_string());
+                        }
+
+                        let mut invalidated = 0;
+                        if !exts_to_invalidate.is_empty() {
+                            let repo_root = self.resolve_target_project(&args).unwrap_or_else(|_| std::env::current_dir().unwrap());
+                            let cortex_dir = repo_root.join(".cortexast");
+                            let db_dir = cortex_dir.join("db");
+                            if db_dir.exists() {
+                                if let Ok(mut index) = crate::vector_store::CodebaseIndex::open(&repo_root, &db_dir, "nomic-embed-text", 60) {
+                                    let refs: Vec<&str> = exts_to_invalidate.iter().map(|s| s.as_str()).collect();
+                                    invalidated = index.invalidate_extensions(&refs);
+                                }
+                            }
+                        }
+
+                        ok(serde_json::to_string(&json!({
+                            "status": "success",
+                            "message": format!(
+                                "Successfully downloaded and hot-reloaded parsers: {:?}. Failed: {:?}. Retro-rescan invalidated {} cached records matching extensions: {:?}.", 
+                                loaded_langs, failed_langs, invalidated, exts_to_invalidate
+                            )
+                        })).unwrap_or_default())
+                    }
+                    _ => err("Invalid action. Must be 'status' or 'add'.".to_string()),
+                }
+            }
             "cortex_list_network" => {
                 match get_network_map() {
                     Ok(json_data) => ok(serde_json::to_string(&json_data).unwrap_or_default()),

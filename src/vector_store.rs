@@ -695,6 +695,26 @@ impl CodebaseIndex {
             .map(|(_, p)| p.replace('\\', "/"))
             .collect())
     }
+
+    pub fn invalidate_extensions(&mut self, exts: &[&str]) -> usize {
+        let mut count = 0;
+        let mut to_remove = Vec::new();
+        for key in self.store.entries.keys() {
+            if let Some(ext) = key.split('.').last() {
+                if exts.contains(&ext) {
+                    to_remove.push(key.clone());
+                }
+            }
+        }
+        for key in &to_remove {
+            self.store.entries.remove(key);
+            count += 1;
+        }
+        if count > 0 {
+            self.store.save(&self.index_path);
+        }
+        count
+    }
 }
 
 // ---------------------------------------------------------------------------

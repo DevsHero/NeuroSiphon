@@ -1,6 +1,6 @@
 [package]
 name = "cortexast"
-version = "2.0.4"
+version = "2.1.0"
 edition = "2021"
 description = "The AI-Native Code Intelligence Backend for LLM agents. Pure Rust MCP server with semantic code navigation and AST time machine."
 authors = ["Thanon Aphithanawat <thanon@aphithanawat.me>"]
@@ -43,32 +43,16 @@ serde_yaml = "0.9"
 ureq = { version = "2.12", features = ["json"] }
 
 # Deep-dive inspection (symbol extraction)
-tree-sitter = "0.26.5"
+tree-sitter = { version = "0.26.5", features = ["wasm"] }
 tree-sitter-rust = "0.21.0"
 tree-sitter-typescript = "0.21.0"
 tree-sitter-python = "0.21.0"
-tree-sitter-go = { version = "0.21.0", optional = true }
-tree-sitter-dart = { version = "0.0.4", optional = true }
-tree-sitter-java = { version = "0.21.0", optional = true }
-tree-sitter-c-sharp = { version = "0.21.0", optional = true }
-tree-sitter-php = { version = "0.23.0", optional = true }
-tree-sitter-proto = { version = "0.4.0", package = "tree-sitter-proto", optional = true }
 
 [dev-dependencies]
 tempfile = "3.15.0"
 
 [features]
-# Enable all tree-sitter language grammars by default for full multi-language support.
-# These are compiled from C source and add a few seconds to fresh builds, but subsequent
-# incremental builds are nearly instant.
-default = ["lang-go", "lang-dart", "lang-java", "lang-csharp", "lang-php", "lang-proto"]
-
-lang-go = ["dep:tree-sitter-go"]
-lang-dart = ["dep:tree-sitter-dart"]
-lang-java = ["dep:tree-sitter-java"]
-lang-csharp = ["dep:tree-sitter-c-sharp"]
-lang-php = ["dep:tree-sitter-php"]
-lang-proto = ["dep:tree-sitter-proto"]
+default = []
 
 [profile.release]
 lto = "thin"

@@ -96,6 +96,9 @@ pub struct Config {
     pub vector_search: VectorSearchConfig,
     /// Settings that govern huge monorepo / multi-service workspace behaviour.
     pub huge_codebase: HugeCodebaseConfig,
+    /// List of active languages for dynamic grammar loading (Wasm).
+    /// Defaults to ["rust", "typescript", "python"].
+    pub active_languages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,6 +132,11 @@ impl Default for Config {
             skeleton_mode: true,
             vector_search: VectorSearchConfig::default(),
             huge_codebase: HugeCodebaseConfig::default(),
+            active_languages: vec![
+                "rust".to_string(),
+                "typescript".to_string(),
+                "python".to_string(),
+            ],
         }
     }
 }

@@ -39,27 +39,35 @@ Save/compare/rollback named AST snapshots. Detects semantic regressions that `gi
 Global memory journal (`~/.cortexast/global_memory.jsonl`) with vector-semantic recall.
 
 ### 🌐 cortex_manage_ast_languages — Self-Evolving Agent
-Download and **hot-reload Wasm parsers** at runtime. No restart required.
+Download and **hot-reload Wasm parsers** at runtime. No restart required. Supports Go, PHP, C++, C#, Java, Ruby, C, and Dart.
 ```json
-{ "action": "add", "languages": ["go", "java"] }
+{ "action": "add", "languages": ["go", "php", "cpp"] }
 ```
 
-### ✏️ cortex_act_edit_ast — Semantic Patcher (v2.1.0)
-Three-phase commit: **dry-run → validate (Tree-sitter) → commit to disk**.
-- Targets semantic nodes by name (`function:login`, `class:Auth`)
-- **Bottom-up byte sorting** — multiple edits never corrupt each other's offsets
-- **Auto-Healer** bridge to local LM Studio/Ollama (10 s hard timeout, markdown sanitization, TS error context injection)
-- **Write-permission guard** before any disk operation
+### 📋 cortex_get_rules
+Fetches and filters codebase AI rules based on context (frontend/backend/db). **Requires CortexSync**.
 
-### ⚙️ cortex_act_edit_config
-Dot-path key-value surgery on `.json`, `.yaml`, `.toml` files.  
-`"path": "dependencies.express"`, `"value": "^5.0.0"` — no full-file rewrite.
+### 🌍 cortex_list_network
+Discover all AI-tracked codebases in your machine. **Requires CortexSync**.
 
-### 📄 cortex_act_edit_docs
-Replace any `## Section` in a Markdown file without touching the rest of the document.
+---
 
-### ⏳ cortex_act_run_async / cortex_check_job
-Spawn shell commands as background jobs. Poll by `job_id`. Avoids MCP timeouts on `cargo build`, `npm install`, etc.
+## Ecosystem Requirement: CortexSync 🧠
+
+For full functionality, **CortexSync** (the "Brain") must be running in the background.
+
+| Tool | Dependent on CortexSync? | Why? |
+|---|---|---|
+| `cortex_remember` | **Yes** | Persists task outcomes to the global journal. |
+| `cortex_memory_retriever`| **Yes** | Performs semantic vector search over past decisions. |
+| `cortex_get_rules` | **Yes** | Fetches centralized rules from the synchronized rule engine. |
+| `cortex_list_network` | **Yes** | Reads the global network map of codebases. |
+| `cortex_code_explorer` | No | Local AST analysis. |
+| `cortex_symbol_analyzer` | No | Local AST analysis. |
+
+If `cortex-sync` is offline, these tools will strictly return a graceful warning without interrupting the agent's workflow.
+
+---
 
 ---
 
@@ -93,83 +101,46 @@ cargo build --release
 
 ---
 
-## CortexAct: Patching Examples
+---
 
-### AST Edit — Replace a Function Body
+## Usage Examples
+
+### Semantic Explorer — Bird's-eye view of a project
 ```json
 {
-  "name": "cortex_act_edit_ast",
+  "name": "cortex_code_explorer",
   "arguments": {
-    "file": "/src/auth.rs",
-    "edits": [
-      {
-        "target": "function:login",
-        "action": "replace",
-        "code": "pub fn login(user: &str, pass: &str) -> Result<Token> { Ok(Token::new()) }"
-      }
-    ]
+    "action": "map_overview",
+    "target_dir": "."
   }
 }
 ```
 
-### Config Patch — Update a Dependency
+### Symbol Search — Find all usages across the repo
 ```json
 {
-  "name": "cortex_act_edit_config",
+  "name": "cortex_symbol_analyzer",
   "arguments": {
-    "file": "package.json",
-    "action": "set",
-    "path": "dependencies.express",
-    "value": "^5.0.0"
+    "action": "find_usages",
+    "symbol_name": "AuthService",
+    "target_dir": "."
   }
 }
 ```
 
-### Async Job — Run Cargo Test
+### Time Travel — Compare AST after refactor
 ```json
 {
-  "name": "cortex_act_run_async",
-  "arguments": { "command": "cargo test --workspace", "cwd": "/src/myproject" }
+  "name": "cortex_chronos",
+  "arguments": {
+    "action": "compare_checkpoint",
+    "symbol_name": "login",
+    "tag_a": "pre-refactor",
+    "tag_b": "__live__"
+  }
 }
 ```
-Then poll: `{ "name": "cortex_check_job", "arguments": { "job_id": "job_abc123" } }`
 
----
-
-## Auto-Healer Architecture
-
-```
-AST Edit Request
-      │
-      ▼
- Permission Guard ──✗──► Clear Error (chmod advice)
-      │ ✓
-      ▼
- In-Memory Patch (bottom-up bytes)
-      │
-      ▼
- Tree-sitter Validator
-      │ ✓                   ✗
-      ▼                     ▼
- Write to Disk        collect_ts_errors()
-      │                     │
-      ▼                Numbered error list
-   Done              + broken code block
-                            │
-                            ▼
-                    Local LLM (LM Studio)
-                    10s hard timeout
-                    Strict system prompt
-                            │
-                      sanitize_llm_code()
-                            │
-                    Tree-sitter Re-Validate
-                     ✓            ✗
-                     │             │
-                Write to Disk   Bail (safe abort)
-```
-
----
 
 ## Self-Evolving Wasm Language Support
 
@@ -193,45 +164,22 @@ cargo test
 # Check (no link)
 cargo check
 
-# Run tests for act/ modules specifically
-cargo test act::
-```
-
-### Test Coverage (act/ modules)
-
-| Test | What it proves |
-|---|---|
-| `bottom_up_sort_preserves_byte_offsets` | Multiple replacements never corrupt offsets |
-| `top_down_order_corrupts_offsets` | Demonstrates the failure mode we prevent |
-| `ts_error_collection_on_broken_rust` | AST walker collects meaningful error messages |
-| `permission_guard_catches_readonly` | Fails fast on `chmod 444` before any edit |
-| `permission_guard_passes_for_writable` | Normal files pass through |
-| `sanitize_strips_rust_fence` | Strips ```rust ... ``` from LLM response |
-| `sanitize_multiple_blocks_joined` | Multi-block LLM responses preserved |
-| `error_context_format_test` | Numbered error list format for LLM |
-
 ---
 
 ## Architecture
 
 ```
-cortexast (binary)
+CortexAST (binary)
 └── src/
     ├── server.rs         # MCP stdio server — all tool schemas + handlers
     ├── inspector.rs      # LanguageConfig, LanguageDriver, Symbol, run_query
-    ├── act/
-    │   ├── editor.rs     # cortex_act_edit_ast — Two-Phase Commit + Auto-Healer
-    │   ├── auto_healer.rs # LM Studio bridge, sanitize_llm_code
-    │   ├── config_patcher.rs # JSON/YAML/TOML dot-path patcher
-    │   ├── docs_patcher.rs   # Markdown section editor
-    │   └── job_manager.rs    # Async job spawner + polling
-    ├── grammar_manager.rs    # Wasm download + hot-reload
-    ├── vector_store.rs       # model2vec embeddings + cache invalidation
-    ├── chronos.rs            # AST snapshot time machine
-    └── memory.rs             # global_memory.jsonl journal
+    ├── grammar_manager.rs # Wasm download + hot-reload (GitHub releases)
+    ├── vector_store.rs    # model2vec embeddings + cache invalidation
+    ├── chronos.rs         # AST snapshot time machine (Chronos)
+    ├── memory.rs          # global_memory.jsonl journal client
+    └── project_map.rs     # Network map for multi-repo roaming
 ```
 
----
 
 ## License
 

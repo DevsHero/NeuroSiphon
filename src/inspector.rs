@@ -740,6 +740,9 @@ pub fn exported_language_config() -> &'static std::sync::RwLock<LanguageConfig> 
 fn language_config() -> &'static std::sync::RwLock<LanguageConfig> {
     static CFG: OnceLock<std::sync::RwLock<LanguageConfig>> = OnceLock::new();
     CFG.get_or_init(|| {
+        // Seed embedded prune queries into the cache dir before loading drivers,
+        // so WasmDriver::try_new finds them on the very first run.
+        crate::grammar_manager::bootstrap_embedded_queries();
         let mut cfg = LanguageConfig::default();
         cfg.load_cached_wasm_drivers();
         std::sync::RwLock::new(cfg)
@@ -1240,11 +1243,16 @@ pub struct WasmDriver {
     lang:      String,
     /// File extensions handled by this driver (lowercase, no dot).
     exts:      Vec<String>,
-    /// Compiled tree-sitter `Language` loaded from the `.wasm`.
+    /// Compiled tree-sitter `Language` loaded from the `.wasm` (kept for
+    /// `language_for_path`; each `make_parser` call reloads a fresh instance).
     language:  Language,
-    /// The WasmStore that owns the compiled grammar; must be attached to every
-    /// `Parser` before calling `parser.set_language()`.
-    store:     std::sync::Arc<std::sync::Mutex<tree_sitter::WasmStore>>,
+    /// The wasmtime Engine used to instantiate grammars.  `WasmStore` instances
+    /// created from the *same* `Engine` can host languages loaded by that
+    /// engine — this is what makes cross-call language reuse correct.
+    engine:    std::sync::Arc<tree_sitter::wasmtime::Engine>,
+    /// Raw `.wasm` bytes kept so that each `make_parser` call can reload the
+    /// language into a fresh `WasmStore` that is tied to `self.engine`.
+    wasm_bytes: std::sync::Arc<Vec<u8>>,
     /// Optional body-prune query text loaded from the `.scm` file.
     prune_scm: Option<String>,
 }
@@ -1293,19 +1301,24 @@ impl WasmDriver {
             }
         };
 
-        // Step 5: stash the store behind a Mutex so multiple parse calls can
-        // safely cycle the WasmStore into the Parser and recover it afterward.
-        let store_arc = std::sync::Arc::new(std::sync::Mutex::new(store));
+        // Step 5: stash the wasmtime Engine behind an Arc so that every
+        // `make_parser` call can create a *new* WasmStore from the *same*
+        // engine.  Languages loaded from a WasmStore are valid only when the
+        // parser's WasmStore was created from the same underlying engine — using
+        // `Engine::default()` each time (the old bug) silently breaks this.
+        let engine_arc = std::sync::Arc::new(engine);
+        let wasm_bytes_arc = std::sync::Arc::new(wasm_bytes);
 
         // Step 6: optionally load the prune query.
         let prune_scm = grammar_manager::load_prune_scm(lang);
 
         eprintln!("[wasm_driver] {lang}: loaded .wasm grammar successfully");
         Some(Self {
-            lang:      lang.to_string(),
-            exts:      exts.iter().map(|e| e.to_string()).collect(),
+            lang:       lang.to_string(),
+            exts:       exts.iter().map(|e| e.to_string()).collect(),
             language,
-            store:     store_arc,
+            engine:     engine_arc,
+            wasm_bytes: wasm_bytes_arc,
             prune_scm,
         })
     }
@@ -1313,12 +1326,22 @@ impl WasmDriver {
 impl LanguageDriver for WasmDriver {
     fn make_parser(&self, _path: &Path) -> Result<Parser> {
         let mut parser = Parser::new();
-        // DUPLICATE Engine to get a fresh WasmStore for each parser invocation.
-        use tree_sitter::{WasmStore, wasmtime::Engine};
-        let engine = Engine::default();
-        let fresh_store = WasmStore::new(&engine).map_err(|e| anyhow::anyhow!("WasmStore fails: {:?}", e))?;
-        parser.set_wasm_store(fresh_store).map_err(|e| anyhow::anyhow!("set_wasm_store fails: {:?}", e))?;
-        parser.set_language(&self.language).context("Failed to set language")?;
+        // Create a fresh WasmStore from the *same* Engine that was used when
+        // `self.language` was originally compiled.  Languages are tied to a
+        // wasmtime Engine instance; using a different Engine (the old bug:
+        // `Engine::default()` on every call) makes `set_language` fail.
+        use tree_sitter::WasmStore;
+        let mut fresh_store = WasmStore::new(&self.engine)
+            .map_err(|e| anyhow::anyhow!("WasmStore::new failed: {:?}", e))?;
+        // Reload the language into the fresh store so it is bound to the
+        // same engine context that the parser will use.
+        let lang = fresh_store
+            .load_language(&self.lang, &self.wasm_bytes)
+            .map_err(|e| anyhow::anyhow!("load_language failed: {:?}", e))?;
+        parser
+            .set_wasm_store(fresh_store)
+            .map_err(|e| anyhow::anyhow!("set_wasm_store failed: {:?}", e))?;
+        parser.set_language(&lang).context("Failed to set language")?;
         Ok(parser)
     }
 
@@ -1347,10 +1370,9 @@ impl LanguageDriver for WasmDriver {
         self.language.clone()
     }
 
-    /// Extract symbols using a generic pattern: look for any named node whose
-    /// field `name` is an identifier.  This is a best-effort heuristic that
-    /// covers the majority of OOP and functional languages without needing a
-    /// hand-crafted query per language.
+    /// Extract symbols using language-specific tree-sitter queries.
+    /// Each Wasm language gets accurate node-type patterns so that
+    /// `read_source`, `find_usages`, and `deep_slice` all work correctly.
     fn extract_skeleton(
         &self,
         _path: &Path,
@@ -1358,22 +1380,134 @@ impl LanguageDriver for WasmDriver {
         root: Node,
         language: Language,
     ) -> Result<Vec<Symbol>> {
-        // Generic fallback: extract top-level identifier captures.
-        let generic_query = r#"
-            [
-              (function_declaration name: (_) @name) @def
-              (method_declaration   name: (_) @name) @def
-              (class_declaration    name: (_) @name) @def
-              (struct_type          name: (_) @name) @def
-              (interface_type       name: (_) @name) @def
-            ]
-        "#;
+        let mut syms: Vec<Symbol> = Vec::new();
 
-        run_query(source, root, &language, generic_query, "function", true)
-            .unwrap_or_default()
-            .into_iter()
-            .collect::<Vec<_>>()
-            .pipe(Ok)
+        match self.lang.as_str() {
+            // ── Go ────────────────────────────────────────────────────────────
+            "go" => {
+                let q_fn = r#"
+                    (function_declaration name: (identifier) @name) @def
+                    (method_declaration   name: (field_identifier) @name) @def
+                "#;
+                let q_type = r#"(type_spec name: (type_identifier) @name) @def"#;
+                syms.extend(run_query(source, root, &language, q_fn,   "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_type, "type",     true).unwrap_or_default());
+            }
+
+            // ── PHP ───────────────────────────────────────────────────────────
+            "php" => {
+                let q_fn = r#"
+                    (function_definition name: (name) @name) @def
+                    (method_declaration  name: (name) @name) @def
+                "#;
+                let q_class = r#"
+                    (class_declaration     name: (name) @name) @def
+                    (interface_declaration name: (name) @name) @def
+                    (trait_declaration     name: (name) @name) @def
+                "#;
+                syms.extend(run_query(source, root, &language, q_fn,    "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_class,  "class",    true).unwrap_or_default());
+            }
+
+            // ── Java ──────────────────────────────────────────────────────────
+            "java" => {
+                let q_fn = r#"
+                    (method_declaration      name: (identifier) @name) @def
+                    (constructor_declaration name: (identifier) @name) @def
+                "#;
+                let q_class = r#"
+                    (class_declaration     name: (identifier) @name) @def
+                    (interface_declaration name: (identifier) @name) @def
+                    (enum_declaration      name: (identifier) @name) @def
+                "#;
+                syms.extend(run_query(source, root, &language, q_fn,    "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_class,  "class",    true).unwrap_or_default());
+            }
+
+            // ── C++ ───────────────────────────────────────────────────────────
+            "cpp" => {
+                // Plain identifier: void foo(...)
+                let q_fn_simple = r#"
+                    (function_definition
+                      declarator: (function_declarator
+                        declarator: (identifier) @name)) @def
+                "#;
+                // Qualified: Foo::bar(...)
+                let q_fn_qualified = r#"
+                    (function_definition
+                      declarator: (function_declarator
+                        declarator: (qualified_identifier
+                          name: (identifier) @name))) @def
+                "#;
+                let q_class = r#"
+                    (class_specifier  name: (type_identifier) @name) @def
+                    (struct_specifier name: (type_identifier) @name) @def
+                "#;
+                syms.extend(run_query(source, root, &language, q_fn_simple,    "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_fn_qualified,  "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_class,         "class",    true).unwrap_or_default());
+            }
+
+            // ── C# ────────────────────────────────────────────────────────────
+            "c_sharp" | "csharp" => {
+                let q_fn = r#"
+                    (method_declaration      name: (identifier) @name) @def
+                    (constructor_declaration name: (identifier) @name) @def
+                "#;
+                let q_class = r#"
+                    (class_declaration     name: (identifier) @name) @def
+                    (interface_declaration name: (identifier) @name) @def
+                    (struct_declaration    name: (identifier) @name) @def
+                    (enum_declaration      name: (identifier) @name) @def
+                "#;
+                syms.extend(run_query(source, root, &language, q_fn,    "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_class,  "class",    true).unwrap_or_default());
+            }
+
+            // ── Ruby ──────────────────────────────────────────────────────────
+            "ruby" => {
+                let q_fn = r#"
+                    (method           name: (identifier) @name) @def
+                    (singleton_method name: (identifier) @name) @def
+                "#;
+                let q_class = r#"
+                    (class  name: (constant) @name) @def
+                    (module name: (constant) @name) @def
+                "#;
+                syms.extend(run_query(source, root, &language, q_fn,    "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_class,  "class",    true).unwrap_or_default());
+            }
+
+            // ── C ─────────────────────────────────────────────────────────────
+            "c" => {
+                let q_fn = r#"
+                    (function_definition
+                      declarator: (function_declarator
+                        declarator: (identifier) @name)) @def
+                "#;
+                let q_type = r#"
+                    (struct_specifier  name: (type_identifier) @name) @def
+                    (type_definition   declarator: (type_identifier) @name) @def
+                "#;
+                syms.extend(run_query(source, root, &language, q_fn,    "function", true).unwrap_or_default());
+                syms.extend(run_query(source, root, &language, q_type,   "type",     true).unwrap_or_default());
+            }
+
+            // ── Generic fallback for any other Wasm language ──────────────────
+            _ => {
+                let generic_query = r#"
+                    (function_declaration name: (_) @name) @def
+                    (method_declaration   name: (_) @name) @def
+                    (class_declaration    name: (_) @name) @def
+                "#;
+                syms.extend(
+                    run_query(source, root, &language, generic_query, "function", true)
+                        .unwrap_or_default(),
+                );
+            }
+        }
+
+        Ok(syms)
     }
 
     fn body_prune_ranges(
@@ -1395,14 +1529,6 @@ impl LanguageDriver for WasmDriver {
             .collect())
     }
 }
-
-/// Small pipe-style helper to keep the `extract_skeleton` return clean.
-trait Pipe: Sized {
-    fn pipe<F, R>(self, f: F) -> R where F: FnOnce(Self) -> R { f(self) }
-}
-impl<T> Pipe for Vec<T> {}
-
-
 
 fn run_query_byte_ranges(
     source: &[u8],
@@ -2037,10 +2163,15 @@ pub fn find_usages(target_dir: &Path, symbol_name: &str) -> Result<String> {
         let Some(driver) = cfg.driver_for_path(path) else {
             continue;
         };
-        let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let Ok(mut parser) = driver.make_parser(path) else { continue };
+        let mut parser = match driver.make_parser(path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[cortexast] parser init failed for {}: {e}", path.display());
+                continue;
+            }
+        };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -2198,10 +2329,15 @@ pub fn propagation_checklist(
         let Some(driver) = cfg.driver_for_path(path) else {
             continue;
         };
-        let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let Ok(mut parser) = driver.make_parser(path) else { continue };
+        let mut parser = match driver.make_parser(path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[cortexast] parser init failed for {}: {e}", path.display());
+                continue;
+            }
+        };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -2686,7 +2822,13 @@ pub fn find_implementations(target_dir: &Path, trait_or_interface: &str) -> Resu
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let Ok(mut parser) = driver.make_parser(path) else { continue };
+        let mut parser = match driver.make_parser(path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[cortexast] parser init failed for {}: {e}", path.display());
+                continue;
+            }
+        };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };
@@ -3828,7 +3970,13 @@ pub fn call_hierarchy(target_dir: &Path, symbol_name: &str) -> Result<String> {
         let language = driver.language_for_path(path);
         let source = source_text.as_bytes();
 
-        let Ok(mut parser) = driver.make_parser(path) else { continue };
+        let mut parser = match driver.make_parser(path) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[cortexast] parser init failed for {}: {e}", path.display());
+                continue;
+            }
+        };
         let Some(tree) = parser.parse(source_text, None) else {
             continue;
         };

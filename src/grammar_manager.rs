@@ -138,3 +138,42 @@ pub fn load_prune_scm(lang: &str) -> Option<String> {
     let path = scm_path(lang).ok()?;
     std::fs::read_to_string(path).ok()
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bootstrap — seed embedded prune queries into the local cache
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Copy the prune `.scm` files that are embedded in the binary (via
+/// `include_str!`) into the grammar cache directory so that Wasm drivers can
+/// find them at runtime.
+///
+/// Each entry is `(embedded_content, cache_lang_name)`.  A file is only
+/// written when it doesn't already exist, so user-supplied overrides are
+/// preserved.
+///
+/// Call this once before `load_cached_wasm_drivers()` to ensure prune queries
+/// are available on the very first run (before any `.wasm` download).
+pub fn bootstrap_embedded_queries() {
+    const QUERIES: &[(&str, &str)] = &[
+        (include_str!("../queries/go_prune.scm"),     "go"),
+        (include_str!("../queries/php_prune.scm"),    "php"),
+        (include_str!("../queries/java_prune.scm"),   "java"),
+        (include_str!("../queries/dart_prune.scm"),   "dart"),
+        // Note: the repo file is named `csharp_prune.scm`; the grammar lang is `c_sharp`.
+        (include_str!("../queries/csharp_prune.scm"), "c_sharp"),
+        (include_str!("../queries/cpp_prune.scm"),    "cpp"),
+        (include_str!("../queries/ruby_prune.scm"),   "ruby"),
+        (include_str!("../queries/c_prune.scm"),      "c"),
+    ];
+
+    let Ok(dir) = grammar_cache_dir() else { return };
+
+    for (content, lang) in QUERIES {
+        let dest = dir.join(format!("{lang}_prune.scm"));
+        if !dest.exists() {
+            if let Err(e) = std::fs::write(&dest, content) {
+                eprintln!("[grammar_manager] bootstrap: failed to write {}: {e}", dest.display());
+            }
+        }
+    }
+}
